@@ -400,7 +400,7 @@ struct MusicPlayerPage {
           .margin({ bottom: 16 })
           this.leftControlBars()
         }
-        .width('36%')
+        .width('46%')
         .alignItems(HorizontalAlign.Start)
 
         Column() {
@@ -437,6 +437,7 @@ struct MusicPlayerPage {
           .padding({ bottom: 10 })
           .border({ width: { bottom: 1 }, color: '#D8D5CC' })
 
+          if (false) {
           Row() {
             Text(fmtTime(this.currentTimeMs)).fontSize(10).fontColor('#1F211F')
             Stack({ alignContent: Alignment.Bottom }) {
@@ -450,39 +451,6 @@ struct MusicPlayerPage {
           .width('100%').justifyContent(FlexAlign.Center).margin({ top: 0, bottom: 0 })
           .visibility(Visibility.Hidden)
           .height(0)
-
-          Row({ space: 6 }) {
-            Button() {
-              Text('‹ PREV').fontSize(9).fontColor('#1F211F')
-            }
-            .width(62)
-            .padding({ left: 0, right: 0 })
-            .backgroundColor('transparent')
-            .onClick((): void => this.prev())
-            Button() {
-              Text(this.isLoading ? 'LOADING' : (this.isPlaying ? 'PAUSE' : 'PLAY'))
-                .fontSize(10)
-                .letterSpacing(1.2)
-                .fontColor('#FBFAF7')
-            }
-            .width(64)
-            .height(36)
-            .borderRadius(2)
-            .backgroundColor('#1F211F')
-            .enabled(this.tracks.length > 0 && !this.isLoading)
-            .onClick((): void => this.togglePlay())
-            Button() {
-              Text('NEXT ›').fontSize(9).fontColor('#1F211F')
-            }
-            .width(62)
-            .padding({ left: 0, right: 0 })
-            .backgroundColor('transparent')
-            .onClick((): void => this.next())
-          }
-          .width('100%')
-          .justifyContent(FlexAlign.Center)
-          .zIndex(4)
-          .margin({ bottom: 24 })
 
           Row({ space: 18 }) {
             Column() {
@@ -521,14 +489,37 @@ struct MusicPlayerPage {
           .height(196)
           .margin({ bottom: 6 })
           .visibility(Visibility.Hidden)
+          }
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
       }
       .width('100%')
-      .alignItems(VerticalAlign.Top)
+      .alignItems(VerticalAlign.Center)
+      .justifyContent(FlexAlign.Center)
       .layoutWeight(1)
       .margin({ top: 24, bottom: 24 })
+
+      Row() {
+        Button() {
+          Text('‹ PREV').fontSize(10).fontColor('#1F211F')
+        }
+        .width(92).backgroundColor('transparent').onClick((): void => this.prev())
+        Blank()
+        Button() {
+          Text(this.isLoading ? 'LOADING' : (this.isPlaying ? 'PAUSE' : 'PLAY'))
+            .fontSize(10).letterSpacing(1).fontColor('#FBFAF7')
+        }
+        .width(86).height(38).borderRadius(2).backgroundColor('#1F211F')
+        .enabled(this.tracks.length > 0 && !this.isLoading).onClick((): void => this.togglePlay())
+        Blank()
+        Button() {
+          Text('NEXT ›').fontSize(10).fontColor('#1F211F')
+        }
+        .width(92).backgroundColor('transparent').onClick((): void => this.next())
+      }
+      .width('100%').height(52).justifyContent(FlexAlign.SpaceBetween)
+      .margin({ bottom: 18 })
 
       Row() {
         Text('PLAYLIST / INDEX')
@@ -583,7 +574,7 @@ struct MusicPlayerPage {
     }
     .width('100%')
     .height('100%')
-    .padding({ left: 42, right: 42, top: 28, bottom: 28 })
+    .padding({ left: 24, right: 24, top: 28, bottom: 28 })
     .backgroundColor('#FBFAF7')
   }
 
