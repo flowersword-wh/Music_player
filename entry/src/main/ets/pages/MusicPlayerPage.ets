@@ -19,6 +19,7 @@ struct MusicPlayerPage {
   @State statusText: string = '空闲';
   @State audioReady: boolean = false;
   @State isLoading: boolean = false;
+  @State isHashing: boolean = false;
   @State playMode: PlayMode = '列表循环';
   @State toastText: string = '';
 
@@ -108,10 +109,11 @@ struct MusicPlayerPage {
   }
 
   private async addFiles(): Promise<void> {
-    if (!this.audioReady) {
+    if (!this.audioReady || this.isHashing) {
       this.statusText = '播放器准备中';
       return;
     }
+    this.isHashing = true;
     try {
       const audioPicker = new picker.AudioViewPicker();
       const uris: string[] = await audioPicker.select();
@@ -169,6 +171,8 @@ struct MusicPlayerPage {
     } catch (e) {
       this.statusText = '无法读取音频';
       this.showToast('选择音频失败，请检查文件权限');
+    } finally {
+      this.isHashing = false;
     }
   }
 
@@ -242,7 +246,7 @@ struct MusicPlayerPage {
   }
 
   private clearTracks(): void {
-    this.audioService.pause();
+    this.audioService.stop();
     this.tracks = [];
     this.currentIndex = -1;
     this.currentTrack = null;
@@ -255,9 +259,11 @@ struct MusicPlayerPage {
   }
 
   private removeTrack(i: number): void {
+    const removedName = this.tracks[i]?.name ?? '歌曲';
     const wasCurrent = i === this.currentIndex;
     this.tracks.splice(i, 1);
     if (this.tracks.length === 0) {
+      this.audioService.stop();
       this.currentIndex = -1;
       this.currentTrack = null;
       this.currentTimeMs = 0;
@@ -268,11 +274,36 @@ struct MusicPlayerPage {
     } else if (i < this.currentIndex) {
       this.currentIndex -= 1;
     }
+    this.showToast(`已删除《${removedName}》`);
   }
 
   build(): void {
     Stack({ alignContent: Alignment.Center }) {
       Column() {
+        Row() {
+          Column() {
+            Text('PRISM PLAYER')
+              .fontSize(16)
+              .fontWeight(FontWeight.Bold)
+              .letterSpacing(2)
+              .fontColor('#F5F0FF')
+            Text('LOCAL AUDIO WORKSPACE')
+              .fontSize(9)
+              .letterSpacing(1.2)
+              .fontColor('#8F82B5')
+              .margin({ top: 3 })
+          }
+          Blank()
+          Text(`${this.tracks.length} 首歌曲`)
+            .fontSize(11)
+            .fontColor('#B8ACDC')
+            .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+            .backgroundColor('rgba(255,255,255,0.06)')
+            .borderRadius(12)
+        }
+        .width('100%')
+        .margin({ bottom: 18 })
+
         // 顶部状态行
         Row() {
           Row() {
@@ -441,7 +472,7 @@ struct MusicPlayerPage {
             .margin({ right: 6 })
             .backgroundColor('rgba(255,255,255,0.06)')
             .fontColor('#B8ACDC')
-            .enabled(this.tracks.length > 0)
+            .enabled(this.tracks.length > 0 && !this.isHashing)
             .onClick((): void => {
               this.clearTracks();
             })
@@ -450,6 +481,7 @@ struct MusicPlayerPage {
             .height(28)
             .backgroundColor('rgba(255,255,255,0.06)')
             .fontColor('#F5F0FF')
+            .enabled(this.audioReady && !this.isHashing)
             .onClick((): void => {
               this.addFiles();
             })

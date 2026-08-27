@@ -138,6 +138,37 @@ export class AudioService {
     }
   }
 
+  /** 停止当前播放并释放当前文件句柄,但保留播放器实例供下一首使用。 */
+  async stop(): Promise<void> {
+    const player = this.player;
+    if (!player || this.released) {
+      return;
+    }
+    const requestId = ++this.loadRequestId;
+    this.autoPlayOnReady = false;
+    try {
+      await player.reset();
+    } catch (err) {
+      if (requestId !== this.loadRequestId || this.released) {
+        return;
+      }
+      const e = err as BusinessError;
+      this.onError(`${e.code}: ${e.message}`);
+    }
+    if (requestId !== this.loadRequestId || this.released) {
+      return;
+    }
+    if (this.currentFile) {
+      try {
+        fileIo.closeSync(this.currentFile);
+      } catch (err) {
+        const e = err as BusinessError;
+        hilog.warn(DOMAIN, 'AudioService', 'close stopped fd failed: %{public}s', `${e.code}: ${e.message}`);
+      }
+      this.currentFile = null;
+    }
+  }
+
   /** ms: 目标进度(毫秒) */
   seek(ms: number): void {
     this.player?.seek(ms);

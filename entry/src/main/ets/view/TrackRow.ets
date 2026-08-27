@@ -14,7 +14,11 @@ export struct TrackRow {
 
   build(): void {
     Row() {
-      Text(this.isCurrent ? '▶' : (this.index + 1).toString().padStart(2, '0'))
+      Text(this.isCurrent ? '▶' : '')
+        .fontSize(10)
+        .fontColor(this.track.accent)
+        .width(12)
+      Text((this.index + 1).toString().padStart(2, '0'))
         .fontSize(11)
         .fontColor(this.isCurrent ? this.track.accent : '#B8ACDC')
         .width(20)

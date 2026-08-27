@@ -1,4 +1,5 @@
 import { describe, beforeAll, beforeEach, afterEach, afterAll, it, expect } from '@ohos/hypium';
+import { fmtTime } from '../main/ets/model/Track';
 
 export default function localUnitTest() {
   describe('localUnitTest', () => {
@@ -28,6 +29,19 @@ export default function localUnitTest() {
       // Defines a variety of assertion methods, which are used to declare expected boolean conditions.
       expect(a).assertContain(b);
       expect(a).assertEqual(a);
+    });
+
+    it('formatsTrackDuration', 0, () => {
+      expect(fmtTime(0)).assertEqual('00:00');
+      expect(fmtTime(1000)).assertEqual('00:01');
+      expect(fmtTime(61000)).assertEqual('01:01');
+      expect(fmtTime(3661000)).assertEqual('61:01');
+    });
+
+    it('handlesInvalidTrackDuration', 0, () => {
+      expect(fmtTime(-1)).assertEqual('00:00');
+      expect(fmtTime(Number.NaN)).assertEqual('00:00');
+      expect(fmtTime(Number.POSITIVE_INFINITY)).assertEqual('00:00');
     });
   });
 }
