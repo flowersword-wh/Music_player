@@ -400,7 +400,7 @@ struct MusicPlayerPage {
           .margin({ bottom: 16 })
           this.leftControlBars()
         }
-        .width('42%')
+        .width('36%')
         .alignItems(HorizontalAlign.Start)
 
         Column() {
@@ -447,33 +447,41 @@ struct MusicPlayerPage {
             .onTouch((event: TouchEvent): void => this.updateProgressFromTouch(event))
             Text(fmtTime(this.durationMs)).fontSize(10).fontColor('#1F211F')
           }
-          .width('100%').justifyContent(FlexAlign.Center).margin({ top: 20, bottom: 22 })
+          .width('100%').justifyContent(FlexAlign.Center).margin({ top: 0, bottom: 0 })
           .visibility(Visibility.Hidden)
+          .height(0)
 
-          Row({ space: 18 }) {
-            Button('‹  PREV')
-              .fontSize(10)
-              .fontColor('#1F211F')
-              .backgroundColor('transparent')
-              .onClick((): void => this.prev())
+          Row({ space: 6 }) {
+            Button() {
+              Text('‹ PREV').fontSize(9).fontColor('#1F211F')
+            }
+            .width(62)
+            .padding({ left: 0, right: 0 })
+            .backgroundColor('transparent')
+            .onClick((): void => this.prev())
             Button() {
               Text(this.isLoading ? 'LOADING' : (this.isPlaying ? 'PAUSE' : 'PLAY'))
                 .fontSize(10)
                 .letterSpacing(1.2)
                 .fontColor('#FBFAF7')
             }
-            .width(78)
+            .width(64)
             .height(36)
             .borderRadius(2)
             .backgroundColor('#1F211F')
             .enabled(this.tracks.length > 0 && !this.isLoading)
             .onClick((): void => this.togglePlay())
-            Button('NEXT  ›')
-              .fontSize(10)
-              .fontColor('#1F211F')
-              .backgroundColor('transparent')
-              .onClick((): void => this.next())
+            Button() {
+              Text('NEXT ›').fontSize(9).fontColor('#1F211F')
+            }
+            .width(62)
+            .padding({ left: 0, right: 0 })
+            .backgroundColor('transparent')
+            .onClick((): void => this.next())
           }
+          .width('100%')
+          .justifyContent(FlexAlign.Center)
+          .zIndex(4)
           .margin({ bottom: 24 })
 
           Row({ space: 18 }) {
