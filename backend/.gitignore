@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+cache.db
+*.db-shm
+*.db-wal
+qrcode.png
+anonymous-search-download-test.*
+qr-search-download-test.*
+test*.m4a
+test*.mp4

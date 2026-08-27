@@ -1,10 +1,12 @@
 import { picker } from '@kit.CoreFileKit';
 import { AudioService, PlayerState } from '../common/AudioService';
+import { BilibiliApiService, BilibiliSearchItem } from '../common/BilibiliApiService';
 import { Track, ACCENT_PAIRS, fmtTime } from '../model/Track';
 import { BlobCanvas } from '../view/BlobCanvas';
 import { TrackRow } from '../view/TrackRow';
 
 type PlayMode = '顺序播放' | '列表循环' | '单曲循环' | '随机播放';
+type MainPage = '首页' | '搜索' | '统计';
 
 @Entry
 @Component
@@ -23,8 +25,14 @@ struct MusicPlayerPage {
   @State playMode: PlayMode = '列表循环';
   @State toastText: string = '';
   @State pressedNav: string = '';
+  @State activePage: MainPage = '首页';
+  @State searchKeyword: string = '';
+  @State searchItems: BilibiliSearchItem[] = [];
+  @State isSearching: boolean = false;
+  @State searchStatus: string = '输入关键词开始搜索';
 
   private audioService: AudioService = new AudioService();
+  private apiService: BilibiliApiService = new BilibiliApiService();
   private seeking: boolean = false;
   private lastUiTimeMs: number = -1;
   private lastDraggingTimeMs: number = -1;
@@ -33,6 +41,7 @@ struct MusicPlayerPage {
   private completionTimer: number = -1;
   private toastTimer: number = -1;
   private playlistScroller: Scroller = new Scroller();
+  private mainPages: MainPage[] = ['首页', '搜索', '统计'];
 
   private centerCurrentTrack(): void {
     if (this.currentIndex < 0 || this.currentIndex >= this.tracks.length) {
@@ -70,6 +79,31 @@ struct MusicPlayerPage {
       this.pressedNav = control;
     } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
       this.pressedNav = '';
+    }
+  }
+
+  private totalKnownDuration(): number {
+    return this.tracks.reduce((total: number, track: Track): number => {
+      return total + (track.duration > 0 ? track.duration : 0);
+    }, 0);
+  }
+
+  private async performSearch(): Promise<void> {
+    const keyword = this.searchKeyword.trim();
+    if (keyword.length === 0) {
+      this.searchStatus = '请输入搜索关键词';
+      return;
+    }
+    this.isSearching = true;
+    this.searchStatus = '搜索中…';
+    try {
+      const result = await this.apiService.search(keyword);
+      this.searchItems = result.items;
+      this.searchStatus = result.items.length > 0 ? `找到 ${result.total} 个结果` : '没有找到相关视频';
+    } catch (_) {
+      this.searchStatus = '搜索失败，请确认 Python 后端已启动';
+    } finally {
+      this.isSearching = false;
     }
   }
 
@@ -372,6 +406,279 @@ struct MusicPlayerPage {
   }
 
   @Builder
+  private searchPage(): void {
+    Column() {
+      Row() {
+        Text('SEARCH')
+          .fontSize(11)
+          .letterSpacing(2)
+          .fontColor('#85847D')
+        Blank()
+        Text('BILIBILI DISCOVERY')
+          .fontSize(10)
+          .letterSpacing(1.2)
+          .fontColor('#85847D')
+      }
+      .width('100%')
+      .margin({ bottom: 18 })
+
+      Row({ space: 8 }) {
+        TextInput({ placeholder: '搜索视频或音乐', text: this.searchKeyword })
+          .layoutWeight(1)
+          .height(40)
+          .fontSize(13)
+          .backgroundColor('#E8E6DF')
+          .onChange((value: string): void => {
+            this.searchKeyword = value;
+          })
+        Button(this.isSearching ? '搜索中' : '搜索')
+          .width(68)
+          .height(40)
+          .fontSize(11)
+          .fontColor('#FBFAF7')
+          .backgroundColor('#1F211F')
+          .enabled(!this.isSearching)
+          .onClick((): void => {
+            this.performSearch();
+          })
+      }
+      .width('100%')
+      .margin({ bottom: 10 })
+
+      Text(this.searchStatus)
+        .fontSize(10)
+        .fontColor('#85847D')
+        .margin({ bottom: 12 })
+
+      if (this.searchItems.length > 0) {
+        List({ space: 0 }) {
+          ForEach(this.searchItems, (item: BilibiliSearchItem) => {
+            ListItem() {
+              Row({ space: 10 }) {
+                Text(item.title)
+                  .fontSize(13)
+                  .fontColor('#1F211F')
+                  .layoutWeight(1)
+                  .maxLines(2)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                Column() {
+                  Text(item.author).fontSize(10).fontColor('#77766F')
+                  Text(item.duration).fontSize(10).fontColor('#85847D').margin({ top: 4 })
+                }
+                .width(72)
+                .alignItems(HorizontalAlign.End)
+              }
+              .width('100%')
+              .padding({ top: 12, bottom: 12, left: 8, right: 8 })
+              .border({ width: { bottom: 1 }, color: '#D8D5CC' })
+            }
+          }, (item: BilibiliSearchItem): string => item.bvid)
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .scrollBar(BarState.Auto)
+      } else {
+        Column() {
+          Text('BILIBILI')
+            .fontSize(28)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#1F211F')
+          Text('SEARCH RESULTS WILL APPEAR HERE')
+            .fontSize(10)
+            .letterSpacing(1.1)
+            .fontColor('#85847D')
+            .margin({ top: 10 })
+        }
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+      }
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
+  private statsPage(): void {
+    Scroll() {
+      Column({ space: 16 }) {
+        Row() {
+          Column() {
+            Text('STATISTICS')
+              .fontSize(11)
+              .letterSpacing(2)
+              .fontColor('#85847D')
+            Text('PLAYBACK ARCHIVE')
+              .fontSize(28)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#1F211F')
+              .margin({ top: 8 })
+          }
+          .alignItems(HorizontalAlign.Start)
+          Blank()
+          Text('LOCAL / 2026')
+            .fontSize(9)
+            .letterSpacing(1.2)
+            .fontColor('#85847D')
+            .margin({ top: 4 })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Top)
+
+        Row({ space: 10 }) {
+          Column() {
+            Text(this.tracks.length.toString())
+              .fontSize(27)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#174A9C')
+            Text('TRACKS').fontSize(9).letterSpacing(1.2).fontColor('#77766F').margin({ top: 6 })
+          }
+          .layoutWeight(1)
+          .padding({ top: 14, bottom: 14, left: 14, right: 14 })
+          .backgroundColor('#E8EEF8')
+          .borderRadius(6)
+
+          Column() {
+            Text(fmtTime(this.totalKnownDuration()))
+              .fontSize(27)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#1F211F')
+            Text('PLAY TIME').fontSize(9).letterSpacing(1.2).fontColor('#77766F').margin({ top: 6 })
+          }
+          .layoutWeight(1)
+          .padding({ top: 14, bottom: 14, left: 14, right: 14 })
+          .backgroundColor('#E8E6DF')
+          .borderRadius(6)
+        }
+        .width('100%')
+
+        Row() {
+          Text('CURRENTLY SELECTED')
+            .fontSize(9)
+            .letterSpacing(1.5)
+            .fontColor('#85847D')
+          Blank()
+          Text(this.isPlaying ? 'PLAYING' : 'READY')
+            .fontSize(9)
+            .letterSpacing(1.2)
+            .fontColor(this.isPlaying ? '#174A9C' : '#77766F')
+        }
+        .width('100%')
+
+        Row({ space: 12 }) {
+          Stack() {
+            BlobCanvas({
+              accent: this.currentTrack?.accent ?? '#174A9C',
+              accent2: this.currentTrack?.accent2 ?? '#3E7CFF',
+              isPlaying: this.isPlaying,
+            })
+          }
+          .width(86)
+          .height(86)
+          .border({ width: 1, color: '#D8D5CC' })
+          .borderRadius(6)
+
+          Column() {
+            Text(this.currentTrack?.name ?? 'NO TRACK LOADED')
+              .fontSize(17)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#1F211F')
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Text(this.currentTrack ? `TRACK ${(this.currentIndex + 1).toString().padStart(2, '0')} / ${this.tracks.length.toString().padStart(2, '0')}` : 'IMPORT AUDIO TO BEGIN')
+              .fontSize(9)
+              .letterSpacing(1.1)
+              .fontColor('#77766F')
+              .margin({ top: 8 })
+            Text(`${fmtTime(this.currentTimeMs)} / ${fmtTime(this.durationMs)}`)
+              .fontSize(10)
+              .fontColor('#174A9C')
+              .margin({ top: 4 })
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+        }
+        .width('100%')
+        .padding(14)
+        .backgroundColor('#F0EFEA')
+        .borderRadius(6)
+
+        Row() {
+          Text('RECENTLY ADDED')
+            .fontSize(9)
+            .letterSpacing(1.5)
+            .fontColor('#85847D')
+          Blank()
+          Text(`${this.tracks.length} FILES`)
+            .fontSize(9)
+            .letterSpacing(1.1)
+            .fontColor('#85847D')
+        }
+        .width('100%')
+
+        Column() {
+          if (this.tracks.length === 0) {
+            Text('暂无已导入音频')
+              .fontSize(12)
+              .fontColor('#77766F')
+              .padding(18)
+          } else {
+            ForEach(this.tracks.slice(0, 4), (track: Track, index: number) => {
+              Row() {
+                Text((index + 1).toString().padStart(2, '0'))
+                  .fontSize(10)
+                  .fontColor('#174A9C')
+                  .width(28)
+                Text(track.name)
+                  .fontSize(12)
+                  .fontColor('#1F211F')
+                  .layoutWeight(1)
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                Text(fmtTime(track.duration))
+                  .fontSize(10)
+                  .fontColor('#77766F')
+              }
+              .width('100%')
+              .padding({ top: 11, bottom: 11, left: 8, right: 8 })
+              .border({ width: { bottom: 1 }, color: '#D8D5CC' })
+            }, (track: Track): string => track.hash)
+          }
+        }
+        .width('100%')
+        .backgroundColor('#F0EFEA')
+        .borderRadius(6)
+      }
+      .width('100%')
+      .padding({ bottom: 8 })
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private bottomNavigation(): void {
+    Row({ space: 6 }) {
+      ForEach(this.mainPages, (page: MainPage) => {
+        Button(page)
+          .layoutWeight(1)
+          .height(38)
+          .fontSize(11)
+          .fontWeight(this.activePage === page ? FontWeight.Medium : FontWeight.Regular)
+          .fontColor(this.activePage === page ? '#FBFAF7' : '#77766F')
+          .backgroundColor(this.activePage === page ? '#1F211F' : 'transparent')
+          .borderRadius(4)
+          .onClick((): void => {
+            this.activePage = page;
+          })
+      }, (page: MainPage): string => page)
+    }
+    .width('100%')
+    .height(52)
+    .padding({ top: 7 })
+    .border({ width: { top: 1 }, color: '#D8D5CC' })
+  }
+
+  @Builder
   private editorialLayout(): void {
     Column() {
       Row() {
@@ -389,6 +696,7 @@ struct MusicPlayerPage {
       .padding({ bottom: 14 })
       .border({ width: { bottom: 1 }, color: '#D8D5CC' })
 
+      if (this.activePage === '首页') {
       Row({ space: 30 }) {
         Column() {
           Row() {
@@ -621,9 +929,14 @@ struct MusicPlayerPage {
       .padding({ bottom: 8 })
       .border({ width: { bottom: 1 }, color: '#D8D5CC' })
 
+      } else if (this.activePage === '搜索') {
+        this.searchPage();
+      } else {
+        this.statsPage();
+      }
     }
     .width('100%')
-    .height('100%')
+    .layoutWeight(1)
     .padding({ left: 24, right: 24, top: 28, bottom: 28 })
     .backgroundColor('#FBFAF7')
   }
@@ -631,6 +944,7 @@ struct MusicPlayerPage {
   build(): void {
     Column() {
       this.editorialLayout();
+      this.bottomNavigation();
     }
     .width('100%')
     .height('100%')
