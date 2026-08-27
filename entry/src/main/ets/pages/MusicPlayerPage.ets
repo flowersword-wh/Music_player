@@ -393,12 +393,6 @@ struct MusicPlayerPage {
               accent2: '#174A9C',
               isPlaying: false,
             })
-            Text(this.currentTrack ? '03' : '—')
-              .fontSize(42)
-              .fontWeight(FontWeight.Bold)
-              .letterSpacing(2)
-              .fontColor('#F3F1EB')
-              .position({ x: 20, y: 22 })
           }
           .width('100%')
           .aspectRatio(1)
@@ -526,7 +520,7 @@ struct MusicPlayerPage {
       .width('100%')
       .alignItems(VerticalAlign.Top)
       .layoutWeight(1)
-      .margin({ top: -24, bottom: 24 })
+      .margin({ top: 24, bottom: 24 })
 
       Row() {
         Text('PLAYLIST / INDEX')
