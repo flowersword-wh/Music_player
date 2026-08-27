@@ -107,7 +107,7 @@ struct MusicPlayerPage {
         });
       });
     } catch (e) {
-      // 用户取消选择或权限问题都会走到这里,静默处理即可
+      this.statusText = '无法读取音频';
     }
   }
 

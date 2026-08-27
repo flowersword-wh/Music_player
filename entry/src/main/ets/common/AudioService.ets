@@ -23,6 +23,9 @@ export class AudioService {
   private currentFile: fileIo.File | null = null;
   private autoPlayOnReady = false;
   private volume = 1;
+  private loadRequestId = 0;
+  private lifecycleId = 0;
+  private released = false;
 
   onStateChange: (state: PlayerState) => void = () => {};
   onTimeUpdate: (currentMs: number) => void = () => {};
@@ -31,9 +34,16 @@ export class AudioService {
   onError: (message: string) => void = () => {};
 
   async init(): Promise<boolean> {
+    this.released = false;
+    const lifecycleId = this.lifecycleId;
     try {
-      this.player = await media.createAVPlayer();
-      this.player.setVolume(this.volume);
+      const player = await media.createAVPlayer();
+      if (this.released || lifecycleId !== this.lifecycleId) {
+        await player.release();
+        return false;
+      }
+      this.player = player;
+      player.setVolume(this.volume);
     } catch (err) {
       const e = err as BusinessError;
       this.onError(`init failed: ${e.code}: ${e.message}`);
@@ -78,20 +88,33 @@ export class AudioService {
 
   /** 加载一个新的音频地址,默认加载完成后自动播放 */
   async load(uri: string, autoPlay: boolean = true): Promise<void> {
-    if (!this.player) {
+    const player = this.player;
+    if (!player || this.released) {
       return;
     }
+    const requestId = ++this.loadRequestId;
     this.autoPlayOnReady = autoPlay;
     try {
-      await this.player.reset();
+      await player.reset();
+      if (requestId !== this.loadRequestId || this.released) {
+        return;
+      }
       if (this.currentFile) {
         fileIo.closeSync(this.currentFile);
         this.currentFile = null;
       }
-      this.currentFile = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
-      this.player.url = `fd://${this.currentFile.fd}`;
+      const file = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
+      if (requestId !== this.loadRequestId || this.released) {
+        fileIo.closeSync(file);
+        return;
+      }
+      this.currentFile = file;
+      player.url = `fd://${file.fd}`;
       hilog.info(DOMAIN, 'AudioService', 'load ready, fd=%{public}d', this.currentFile.fd);
     } catch (err) {
+      if (requestId !== this.loadRequestId || this.released) {
+        return;
+      }
       const e = err as BusinessError;
       hilog.error(DOMAIN, 'AudioService', 'load failed: %{public}s', `${e.code}: ${e.message}`);
       this.onError(`load failed: ${e.code}: ${e.message}`);
@@ -172,14 +195,19 @@ export class AudioService {
   }
 
   async release(): Promise<void> {
-    if (this.player) {
+    this.released = true;
+    this.lifecycleId += 1;
+    this.loadRequestId += 1;
+    this.autoPlayOnReady = false;
+    const player = this.player;
+    this.player = null;
+    if (player) {
       try {
-        await this.player.release();
+        await player.release();
       } catch (err) {
         const e = err as BusinessError;
         this.onError(`release failed: ${e.code}: ${e.message}`);
       }
-      this.player = null;
     }
     if (this.currentFile) {
       try {
