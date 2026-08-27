@@ -7,13 +7,15 @@ export class Track {
   uri: string;
   // 时长(毫秒),-1 表示尚未从播放器读取到
   duration: number;
+  hash: string;
   accent: string;
   accent2: string;
 
-  constructor(name: string, uri: string, accent: string, accent2: string) {
+  constructor(name: string, uri: string, hash: string, accent: string, accent2: string) {
     this.name = name;
     this.uri = uri;
     this.duration = -1;
+    this.hash = hash;
     this.accent = accent;
     this.accent2 = accent2;
   }

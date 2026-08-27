@@ -2,6 +2,7 @@ import { media } from '@kit.MediaKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 
 const DOMAIN = 0x0000;
 
@@ -189,6 +190,43 @@ export class AudioService {
         } catch (err) {
           const e = err as BusinessError;
           hilog.warn(DOMAIN, 'AudioService', 'close metadata fd failed: %{public}s', `${e.code}: ${e.message}`);
+        }
+      }
+    }
+  }
+
+  /** 使用 SHA-256 计算文件内容摘要,用于播放列表去重。 */
+  async hashFile(uri: string): Promise<string> {
+    let file: fileIo.File | null = null;
+    try {
+      file = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
+      const md = cryptoFramework.createMd('SHA256');
+      const chunkSize = 64 * 1024;
+      const buffer = new ArrayBuffer(chunkSize);
+      let offset = 0;
+      let readLength = fileIo.readSync(file.fd, buffer, { offset, length: chunkSize });
+      while (readLength > 0) {
+        md.updateSync({ data: new Uint8Array(buffer, 0, readLength) });
+        offset += readLength;
+        readLength = fileIo.readSync(file.fd, buffer, { offset, length: chunkSize });
+      }
+      const digest = md.digestSync().data;
+      let hex = '';
+      for (let i = 0; i < digest.length; i++) {
+        hex += digest[i].toString(16).padStart(2, '0');
+      }
+      return hex;
+    } catch (err) {
+      const e = err as BusinessError;
+      hilog.warn(DOMAIN, 'AudioService', 'hash file failed: %{public}s', `${e.code}: ${e.message}`);
+      return '';
+    } finally {
+      if (file) {
+        try {
+          fileIo.closeSync(file);
+        } catch (err) {
+          const e = err as BusinessError;
+          hilog.warn(DOMAIN, 'AudioService', 'close hash fd failed: %{public}s', `${e.code}: ${e.message}`);
         }
       }
     }

@@ -118,21 +118,47 @@ struct MusicPlayerPage {
       if (!uris || uris.length === 0) {
         return;
       }
+      this.statusText = '检查重复中';
+      this.showToast('正在检查音频是否重复…');
       const startLen = this.tracks.length;
-      uris.forEach((uri: string, i: number): void => {
+      const addedTracks: Track[] = [];
+      const addedUris: string[] = [];
+      let duplicateCount = 0;
+      let unreadableCount = 0;
+      for (let i = 0; i < uris.length; i++) {
+        const uri = uris[i];
+        const hash = await this.audioService.hashFile(uri);
+        if (hash.length === 0) {
+          unreadableCount++;
+          continue;
+        }
+        if (this.tracks.some((item: Track): boolean => item.hash === hash) ||
+          addedTracks.some((item: Track): boolean => item.hash === hash)) {
+          duplicateCount++;
+          continue;
+        }
         const rawName = decodeURIComponent(uri.split('/').pop() ?? `曲目 ${startLen + i + 1}`);
         const name = rawName.replace(/\.[^.]+$/, '');
-        const pair = ACCENT_PAIRS[(startLen + i) % ACCENT_PAIRS.length];
-        this.tracks.push(new Track(name, uri, pair[0], pair[1]));
+        const pair = ACCENT_PAIRS[(startLen + addedTracks.length) % ACCENT_PAIRS.length];
+        addedTracks.push(new Track(name, uri, hash, pair[0], pair[1]));
+        addedUris.push(uri);
+      }
+      if (addedTracks.length === 0) {
+        this.showToast(unreadableCount > 0 ? '无法读取所选音频' : '所选音频已在播放列表中');
+        return;
+      }
+      addedTracks.forEach((track: Track): void => {
+        this.tracks.push(track);
       });
       if (this.currentIndex === -1) {
         this.loadTrack(startLen);
       }
-      this.showToast(`已添加 ${uris.length} 首歌曲`);
+      const duplicateText = duplicateCount > 0 ? `，跳过 ${duplicateCount} 首重复歌曲` : '';
+      const unreadableText = unreadableCount > 0 ? `，跳过 ${unreadableCount} 首无法读取的音频` : '';
+      this.showToast(`已添加 ${addedTracks.length} 首歌曲${duplicateText}${unreadableText}`);
       // 后台读取每首歌的时长,列表行会通过 @ObjectLink 自动刷新
-      uris.forEach((uri: string, i: number): void => {
-        const idx = startLen + i;
-        const track = this.tracks[idx];
+      addedUris.forEach((uri: string, i: number): void => {
+        const track = addedTracks[i];
         this.audioService.fetchDurationMs(uri).then((ms: number): void => {
           const currentIdx = this.tracks.indexOf(track);
           if (ms > 0 && currentIdx >= 0) {
@@ -155,6 +181,7 @@ struct MusicPlayerPage {
     this.currentTimeMs = 0;
     this.durationMs = this.tracks[i].duration > 0 ? this.tracks[i].duration : 0;
     this.isLoading = true;
+    this.statusText = '切换中';
     this.audioService.load(this.tracks[i].uri, autoPlay);
   }
 
@@ -451,7 +478,7 @@ struct MusicPlayerPage {
                   },
                 })
               }
-            }, (item: Track, index: number) => `${item.uri}-${index}`)
+            }, (item: Track) => item.hash)
           }
           .width('100%')
           .layoutWeight(1)
