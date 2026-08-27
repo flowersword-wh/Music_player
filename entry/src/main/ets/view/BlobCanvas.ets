@@ -51,6 +51,9 @@ export struct BlobCanvas {
   }
 
   private startLoop(): void {
+    if (this.timerId >= 0) {
+      return;
+    }
     this.timerId = setInterval((): void => {
       this.t += 0.016;
       // 播放时让目标振幅在 0.35~1 之间随机漂移,营造律动感;暂停时回落到 0
@@ -136,6 +139,7 @@ export struct BlobCanvas {
   aboutToDisappear(): void {
     if (this.timerId >= 0) {
       clearInterval(this.timerId);
+      this.timerId = -1;
     }
   }
 

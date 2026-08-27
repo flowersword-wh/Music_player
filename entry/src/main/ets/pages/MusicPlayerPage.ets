@@ -15,6 +15,7 @@ struct MusicPlayerPage {
   @State durationMs: number = 0;
   @State volume: number = 0.75;
   @State statusText: string = '空闲';
+  @State audioReady: boolean = false;
 
   private audioService: AudioService = new AudioService();
   private seeking: boolean = false;
@@ -35,6 +36,10 @@ struct MusicPlayerPage {
         this.currentTrack.duration = ms;
       }
     };
+    this.audioService.onError = (): void => {
+      this.isPlaying = false;
+      this.statusText = '播放失败';
+    };
     this.audioService.onCompleted = (): void => {
       if (this.tracks.length > 1) {
         this.next();
@@ -42,7 +47,12 @@ struct MusicPlayerPage {
         this.isPlaying = false;
       }
     };
-    this.audioService.init();
+    this.audioService.init().then((ready: boolean): void => {
+      this.audioReady = ready;
+      if (ready) {
+        this.audioService.setVolume(this.volume);
+      }
+    });
   }
 
   aboutToDisappear(): void {
@@ -65,6 +75,10 @@ struct MusicPlayerPage {
   }
 
   private async addFiles(): Promise<void> {
+    if (!this.audioReady) {
+      this.statusText = '播放器准备中';
+      return;
+    }
     try {
       const audioPicker = new picker.AudioViewPicker();
       const uris: string[] = await audioPicker.select();
@@ -84,9 +98,11 @@ struct MusicPlayerPage {
       // 后台读取每首歌的时长,列表行会通过 @ObjectLink 自动刷新
       uris.forEach((uri: string, i: number): void => {
         const idx = startLen + i;
+        const track = this.tracks[idx];
         this.audioService.fetchDurationMs(uri).then((ms: number): void => {
-          if (ms > 0 && idx < this.tracks.length) {
-            this.tracks[idx].duration = ms;
+          const currentIdx = this.tracks.indexOf(track);
+          if (ms > 0 && currentIdx >= 0) {
+            this.tracks[currentIdx].duration = ms;
           }
         });
       });
@@ -96,7 +112,7 @@ struct MusicPlayerPage {
   }
 
   private loadTrack(i: number, autoPlay: boolean = true): void {
-    if (i < 0 || i >= this.tracks.length) {
+    if (!this.audioReady || i < 0 || i >= this.tracks.length) {
       return;
     }
     this.currentIndex = i;

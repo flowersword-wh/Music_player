@@ -22,6 +22,7 @@ export class AudioService {
   // 需要先 openSync 成 fd 再以 fd:// 播放;fd 在播放期间必须保持打开。
   private currentFile: fileIo.File | null = null;
   private autoPlayOnReady = false;
+  private volume = 1;
 
   onStateChange: (state: PlayerState) => void = () => {};
   onTimeUpdate: (currentMs: number) => void = () => {};
@@ -29,13 +30,14 @@ export class AudioService {
   onCompleted: () => void = () => {};
   onError: (message: string) => void = () => {};
 
-  async init(): Promise<void> {
+  async init(): Promise<boolean> {
     try {
       this.player = await media.createAVPlayer();
+      this.player.setVolume(this.volume);
     } catch (err) {
       const e = err as BusinessError;
       this.onError(`init failed: ${e.code}: ${e.message}`);
-      return;
+      return false;
     }
 
     this.player.on('stateChange', (state: string) => {
@@ -71,6 +73,7 @@ export class AudioService {
       hilog.error(DOMAIN, 'AudioService', 'AVPlayer error: %{public}s', `${err.code}: ${err.message}`);
       this.onError(`${err.code}: ${err.message}`);
     });
+    return true;
   }
 
   /** 加载一个新的音频地址,默认加载完成后自动播放 */
@@ -118,7 +121,8 @@ export class AudioService {
 
   /** vol: 0.0 ~ 1.0 */
   setVolume(vol: number): void {
-    this.player?.setVolume(vol);
+    this.volume = Math.max(0, Math.min(1, vol));
+    this.player?.setVolume(this.volume);
   }
 
   get currentTime(): number {
