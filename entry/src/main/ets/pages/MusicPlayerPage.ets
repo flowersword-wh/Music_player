@@ -28,11 +28,22 @@ struct MusicPlayerPage {
   private lastUiTimeMs: number = -1;
   private lastDraggingTimeMs: number = -1;
   private seekRequestId: number = 0;
+  private wasPlayingBeforeSeek: boolean = false;
+  private completionTimer: number = -1;
   private toastTimer: number = -1;
+
+  private updateVolumeFromTouch(event: TouchEvent): void {
+    if (event.touches.length === 0) {
+      return;
+    }
+    const y = event.touches[0].y;
+    this.volume = Math.max(0, Math.min(1, 1 - (y / 188)));
+    this.audioService.setVolume(this.volume);
+  }
 
   aboutToAppear(): void {
     this.audioService.onStateChange = (state: PlayerState): void => {
-      this.isPlaying = state === 'playing';
+      this.isPlaying = !this.seeking && state === 'playing';
       this.isLoading = state === 'initialized' || state === 'prepared';
       if (state === 'playing' || state === 'paused' || state === 'completed' || state === 'error') {
         this.isLoading = false;
@@ -40,7 +51,7 @@ struct MusicPlayerPage {
       this.statusText = this.stateText(state);
     };
     this.audioService.onTimeUpdate = (ms: number): void => {
-      if (!this.seeking && !this.isLoading && (this.lastUiTimeMs < 0 || ms - this.lastUiTimeMs >= 120)) {
+      if (!this.seeking && !this.isLoading && (this.lastUiTimeMs < 0 || ms - this.lastUiTimeMs >= 300)) {
         this.currentTimeMs = ms;
         this.lastUiTimeMs = ms;
       }
@@ -58,7 +69,15 @@ struct MusicPlayerPage {
       this.showToast('无法播放此音频文件');
     };
     this.audioService.onCompleted = (): void => {
-      this.playCompletedTrack();
+      if (this.completionTimer >= 0 || this.isLoading) {
+        return;
+      }
+      this.completionTimer = setTimeout((): void => {
+        this.completionTimer = -1;
+        if (!this.isLoading) {
+          this.playCompletedTrack();
+        }
+      }, 0) as number;
     };
     this.audioService.init().then((ready: boolean): void => {
       this.audioReady = ready;
@@ -72,6 +91,10 @@ struct MusicPlayerPage {
   }
 
   aboutToDisappear(): void {
+    if (this.completionTimer >= 0) {
+      clearTimeout(this.completionTimer);
+      this.completionTimer = -1;
+    }
     if (this.toastTimer >= 0) {
       clearTimeout(this.toastTimer);
       this.toastTimer = -1;
@@ -283,269 +306,278 @@ struct MusicPlayerPage {
     this.showToast(`已删除《${removedName}》`);
   }
 
-  build(): void {
-    Stack({ alignContent: Alignment.Center }) {
-      Column() {
-        Row() {
-          Column() {
-            Text('PRISM PLAYER')
-              .fontSize(16)
-              .fontWeight(FontWeight.Bold)
-              .letterSpacing(2)
-              .fontColor('#F5F0FF')
-            Text('LOCAL AUDIO WORKSPACE')
-              .fontSize(9)
-              .letterSpacing(1.2)
-              .fontColor('#8F82B5')
-              .margin({ top: 3 })
-          }
-          Blank()
-          Text(`${this.tracks.length} 首歌曲`)
-            .fontSize(11)
-            .fontColor('#B8ACDC')
-            .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-            .backgroundColor('rgba(255,255,255,0.06)')
-            .borderRadius(12)
-        }
-        .width('100%')
-        .margin({ bottom: 18 })
-
-        // 顶部状态行
-        Row() {
-          Row() {
-            Circle({ width: 7, height: 7 })
-              .fill(this.isPlaying ? '#2FE6D0' : '#B8ACDC')
-              .margin({ right: 6 })
-            Text(this.statusText.toUpperCase())
-              .fontSize(11)
-              .letterSpacing(1.5)
-              .fontColor('#B8ACDC')
-          }
-          Blank()
-          Text(fmtTime(this.durationMs))
-            .fontSize(11)
-            .fontColor('#B8ACDC')
-        }
-        .width('100%')
-        .margin({ bottom: 16 })
-
-        if (this.toastText.length > 0) {
-          Text(this.toastText)
-            .fontSize(12)
-            .fontColor('#F5F0FF')
-            .width('100%')
-            .padding({ left: 12, right: 12, top: 9, bottom: 9 })
-            .backgroundColor('rgba(255,255,255,0.1)')
-            .borderRadius(10)
-            .margin({ bottom: 12 })
-        }
-
-        // 可视化封面
-        Stack() {
-          BlobCanvas({
-            accent: this.currentTrack?.accent ?? '#FF3E9A',
-            accent2: this.currentTrack?.accent2 ?? '#FF7A45',
-            isPlaying: this.isPlaying,
-          })
-
-          if (this.tracks.length === 0) {
-            Column() {
-              Text('🎵')
-                .fontSize(32)
-                .margin({ bottom: 8 })
-              Text('选择本地音频开始播放')
-                .fontSize(14)
-                .fontColor('#F5F0FF')
-                .margin({ bottom: 4 })
-              Text('支持多选')
-                .fontSize(11)
-                .fontColor('#B8ACDC')
-            }
-            .width('100%')
-            .height('100%')
-            .justifyContent(FlexAlign.Center)
-            .backgroundColor('rgba(15,10,36,0.55)')
-            .borderRadius(22)
-            .onClick((): void => {
-              this.addFiles();
-            })
-          }
-        }
-        .width('100%')
-        .layoutWeight(2)
-        .margin({ bottom: 18 })
-
-        // 曲目信息
-        Text(this.currentTrack?.name ?? '还没有歌曲')
-          .fontSize(22)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#F5F0FF')
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-        Text(this.currentTrack ? `曲目 ${this.currentIndex + 1} / ${this.tracks.length}` : '上传音频开始播放')
-          .fontSize(13)
-          .fontColor('#B8ACDC')
-          .width('100%')
-          .margin({ bottom: 16 })
-
-        // 进度条
-        Row() {
-          Text(fmtTime(this.currentTimeMs)).fontSize(11).fontColor('#B8ACDC')
-          Slider({
-            value: this.durationMs > 0 ? (this.currentTimeMs / this.durationMs) * 100 : 0,
-            min: 0, max: 100, step: 0.1,
-          })
-            .layoutWeight(1)
-            .margin({ left: 10, right: 10 })
-            .selectedColor(this.currentTrack?.accent ?? '#FF3E9A')
-            .enabled(this.durationMs > 0)
-            .onChange((value: number, mode: SliderChangeMode): void => {
-              if (mode === SliderChangeMode.Moving) {
-                this.seeking = true;
-                const draggingTimeMs = (value / 100) * this.durationMs;
-                if (this.lastDraggingTimeMs < 0 || Math.abs(draggingTimeMs - this.lastDraggingTimeMs) >= 120) {
-                  this.currentTimeMs = draggingTimeMs;
-                  this.lastDraggingTimeMs = draggingTimeMs;
-                }
-              } else if (mode === SliderChangeMode.End) {
-                const targetMs = (value / 100) * this.durationMs;
-                const requestId = ++this.seekRequestId;
-                this.currentTimeMs = targetMs;
-                this.lastUiTimeMs = targetMs;
-                this.audioService.seek(targetMs).then((): void => {
-                  if (requestId === this.seekRequestId) {
-                    this.seeking = false;
-                    this.lastDraggingTimeMs = -1;
-                  }
-                });
-              }
-            })
-          Text(fmtTime(this.durationMs)).fontSize(11).fontColor('#B8ACDC')
-        }
-        .width('100%')
-        .margin({ bottom: 18 })
-
-        // 播放控制
-        Row({ space: 22 }) {
-          Image($r('app.media.ic_prev'))
-            .width(22).height(22)
-            .opacity(this.tracks.length ? 1 : 0.3)
-            .onClick((): void => this.prev())
-          Button() {
-            if (this.isLoading) {
-              Text('•••')
-                .fontSize(16)
-                .fontColor('#F5F0FF')
-            } else {
-              Image(this.isPlaying ? $r('app.media.ic_pause') : $r('app.media.ic_play'))
-                .width(20).height(20)
-            }
-          }
-          .width(58).height(58)
-          .borderRadius(29)
-          .backgroundColor(this.currentTrack?.accent ?? '#FF3E9A')
-          .enabled(this.tracks.length > 0 && !this.isLoading)
-          .onClick((): void => this.togglePlay())
-          Image($r('app.media.ic_next'))
-            .width(22).height(22)
-            .opacity(this.tracks.length ? 1 : 0.3)
-            .onClick((): void => this.next())
-        }
-        .justifyContent(FlexAlign.Center)
-        .width('100%')
-        .margin({ bottom: 18 })
-
-        // 音量
-        Row() {
-          Image($r('app.media.ic_volume')).width(16).height(16)
-          Slider({ value: this.volume * 100, min: 0, max: 100 })
-            .layoutWeight(1)
-            .margin({ left: 10 })
-            .selectedColor(this.currentTrack?.accent ?? '#FF3E9A')
-            .onChange((value: number): void => {
-              this.volume = value / 100;
-              this.audioService.setVolume(this.volume);
-            })
-        }
-        .width('100%')
-        .margin({ bottom: 16 })
-
-        // 播放列表
-        Row() {
-          Text('播放列表').fontSize(11).letterSpacing(1).fontColor('#B8ACDC')
-          Blank()
-          Button(this.playMode)
-            .fontSize(10)
-            .height(28)
-            .margin({ right: 6 })
-            .backgroundColor('rgba(255,255,255,0.06)')
-            .fontColor('#B8ACDC')
-            .onClick((): void => {
-              this.cyclePlayMode();
-            })
-          Button('清空')
-            .fontSize(10)
-            .height(28)
-            .margin({ right: 6 })
-            .backgroundColor('rgba(255,255,255,0.06)')
-            .fontColor('#B8ACDC')
-            .enabled(this.tracks.length > 0 && !this.isHashing)
-            .onClick((): void => {
-              this.clearTracks();
-            })
-          Button('＋ 添加')
-            .fontSize(11)
-            .height(28)
-            .backgroundColor('rgba(255,255,255,0.06)')
-            .fontColor('#F5F0FF')
-            .enabled(this.audioReady && !this.isHashing)
-            .onClick((): void => {
-              this.addFiles();
-            })
-        }
-        .width('100%')
-        .margin({ bottom: 8 })
-
-        if (this.tracks.length === 0) {
-          Text('播放列表是空的,上传几首歌吧')
-            .fontSize(12)
-            .fontColor('#B8ACDC')
-            .margin({ top: 8 })
-        } else {
-          List({ space: 4 }) {
-            ForEach(this.tracks, (item: Track, index: number) => {
-              ListItem() {
-                TrackRow({
-                  track: item,
-                  index: index,
-                  isCurrent: item.hash === this.currentTrack?.hash,
-                  onPlay: (i: number): void => {
-                    this.loadTrack(i);
-                  },
-                  onRemove: (i: number): void => {
-                    this.removeTrack(i);
-                  },
-                })
-              }
-            }, (item: Track) => item.hash)
-          }
-          .width('100%')
-          .layoutWeight(1)
-        }
+  @Builder
+  private editorialLayout(): void {
+    Column() {
+      Row() {
+        Text('PRISM / AUDIO ARCHIVE')
+          .fontSize(12)
+          .letterSpacing(1.8)
+          .fontColor('#1F211F')
+        Blank()
+        Text('LOCAL PLAYBACK  /  2026')
+          .fontSize(9)
+          .letterSpacing(1.2)
+          .fontColor('#85847D')
       }
       .width('100%')
-      .height('100%')
-      .padding(26)
-      .borderRadius(28)
-      .linearGradient({
-        angle: 180,
-        colors: [['#211840', 0], ['#2B2050', 1]],
-      })
+      .padding({ bottom: 14 })
+      .border({ width: { bottom: 1 }, color: '#D8D5CC' })
+
+      Row({ space: 30 }) {
+        Column() {
+          Row() {
+            Text('01')
+              .fontSize(10)
+              .letterSpacing(1)
+              .fontColor('#174A9C')
+            Blank()
+            Text(this.isPlaying ? 'PLAYING' : 'READY')
+              .fontSize(9)
+              .letterSpacing(1.4)
+              .fontColor('#77766F')
+          }
+          .width('100%')
+          .margin({ bottom: 0 })
+          .height(0)
+          .visibility(Visibility.Hidden)
+
+          Stack() {
+            BlobCanvas({
+              accent: '#174A9C',
+              accent2: '#174A9C',
+              isPlaying: false,
+            })
+            Text(this.currentTrack ? '03' : '—')
+              .fontSize(42)
+              .fontWeight(FontWeight.Bold)
+              .letterSpacing(2)
+              .fontColor('#F3F1EB')
+              .position({ x: 20, y: 22 })
+          }
+          .width('100%')
+          .aspectRatio(1)
+          .position({ x: 0, y: 28 })
+          .border({ width: 1, color: '#D8D5CC' })
+        }
+        .width('42%')
+        .alignItems(HorizontalAlign.Start)
+
+        Column() {
+          Text('CURRENT TRACK')
+            .fontSize(9)
+            .letterSpacing(2)
+            .fontColor('#85847D')
+            .margin({ bottom: 16 })
+          Text(this.currentTrack?.name ?? 'SELECT AN AUDIO FILE')
+            .fontSize(34)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#1F211F')
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+          Text(this.currentTrack ? `TRACK ${this.currentIndex + 1}  /  ${this.tracks.length}` : 'NO TRACK LOADED')
+            .fontSize(11)
+            .letterSpacing(1.2)
+            .fontColor('#77766F')
+            .margin({ top: 10, bottom: 22 })
+
+          Row() {
+            Text('FORMAT')
+              .fontSize(9)
+              .letterSpacing(1.2)
+              .fontColor('#85847D')
+            Blank()
+            Text('LOCAL AUDIO  ·  STEREO')
+              .fontSize(9)
+              .letterSpacing(1)
+              .fontColor('#77766F')
+          }
+          .width('100%')
+          .padding({ bottom: 10 })
+          .border({ width: { bottom: 1 }, color: '#D8D5CC' })
+
+          Row() {
+            Text(fmtTime(this.currentTimeMs)).fontSize(11).fontColor('#1F211F')
+            Slider({
+              value: this.durationMs > 0 ? (this.currentTimeMs / this.durationMs) * 100 : 0,
+              min: 0, max: 100, step: 0.1,
+            })
+              .layoutWeight(1)
+              .margin({ left: 14, right: 14 })
+              .trackColor('#D5D2C9')
+              .selectedColor('#1F211F')
+              .blockColor('#1F211F')
+              .trackThickness(6)
+              .blockSize({ width: 12, height: 12 })
+              .trackBorderRadius(0)
+              .selectedBorderRadius(0)
+              .showTips(false)
+              .enabled(this.durationMs > 0)
+              .onChange((value: number, mode: SliderChangeMode): void => {
+                if (mode === SliderChangeMode.Moving) {
+                  if (!this.seeking) {
+                    this.wasPlayingBeforeSeek = this.isPlaying;
+                    this.isPlaying = false;
+                  }
+                  this.seeking = true;
+                  const draggingTimeMs = (value / 100) * this.durationMs;
+                  if (this.lastDraggingTimeMs < 0 || Math.abs(draggingTimeMs - this.lastDraggingTimeMs) >= 120) {
+                    this.currentTimeMs = draggingTimeMs;
+                    this.lastDraggingTimeMs = draggingTimeMs;
+                  }
+                } else if (mode === SliderChangeMode.End) {
+                  const targetMs = (value / 100) * this.durationMs;
+                  const requestId = ++this.seekRequestId;
+                  this.currentTimeMs = targetMs;
+                  this.lastUiTimeMs = targetMs;
+                  this.audioService.seek(targetMs).then((): void => {
+                    if (requestId === this.seekRequestId) {
+                      this.seeking = false;
+                      this.lastDraggingTimeMs = -1;
+                      this.isPlaying = this.wasPlayingBeforeSeek;
+                    }
+                  });
+                }
+              })
+            Text(fmtTime(this.durationMs)).fontSize(11).fontColor('#1F211F')
+          }
+          .width('100%')
+          .margin({ top: 20, bottom: 22 })
+
+          Row({ space: 18 }) {
+            Button('‹  PREV')
+              .fontSize(10)
+              .fontColor('#1F211F')
+              .backgroundColor('transparent')
+              .onClick((): void => this.prev())
+            Button() {
+              Text(this.isLoading ? 'LOADING' : (this.isPlaying ? 'PAUSE' : 'PLAY'))
+                .fontSize(10)
+                .letterSpacing(1.2)
+                .fontColor('#FBFAF7')
+            }
+            .width(78)
+            .height(36)
+            .borderRadius(2)
+            .backgroundColor('#1F211F')
+            .enabled(this.tracks.length > 0 && !this.isLoading)
+            .onClick((): void => this.togglePlay())
+            Button('NEXT  ›')
+              .fontSize(10)
+              .fontColor('#1F211F')
+              .backgroundColor('transparent')
+              .onClick((): void => this.next())
+          }
+          .margin({ bottom: 24 })
+
+          Row({ space: 18 }) {
+            Column() {
+              Text('OUTPUT')
+                .fontSize(9)
+                .letterSpacing(1.5)
+                .fontColor('#85847D')
+              Text(Math.round(this.volume * 100).toString().padStart(3, '0'))
+                .fontSize(11)
+                .letterSpacing(1)
+                .fontColor('#1F211F')
+            }
+            .width(58)
+            .alignItems(HorizontalAlign.Start)
+            Stack({ alignContent: Alignment.Bottom }) {
+              Column()
+                .width(44)
+                .height(188)
+                .backgroundColor('#D5D2C9')
+              Column()
+                .width(44)
+                .height(`${Math.max(2, this.volume * 100)}%`)
+                .backgroundColor('#1F211F')
+            }
+            .width(44)
+            .height(188)
+            .onTouch((event: TouchEvent): void => {
+              this.updateVolumeFromTouch(event);
+            })
+            Text('VOLUME')
+              .fontSize(9)
+              .letterSpacing(1.5)
+              .fontColor('#85847D')
+              .rotate({ angle: 90 })
+          }
+          .height(196)
+          .margin({ bottom: 6 })
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Top)
+      .layoutWeight(1)
+      .margin({ top: -24, bottom: 24 })
+
+      Row() {
+        Text('PLAYLIST / INDEX')
+          .fontSize(9)
+          .letterSpacing(1.6)
+          .fontColor('#85847D')
+        Blank()
+        Button(this.playMode)
+          .fontSize(9)
+          .height(26)
+          .backgroundColor('#E8E6DF')
+          .fontColor('#77766F')
+          .onClick((): void => this.cyclePlayMode())
+        Button('＋ ADD')
+          .fontSize(9)
+          .height(26)
+          .margin({ left: 6 })
+          .backgroundColor('#1F211F')
+          .fontColor('#FBFAF7')
+          .enabled(this.audioReady && !this.isHashing)
+          .onClick((): void => {
+            this.addFiles();
+          })
+      }
+      .width('100%')
+      .padding({ bottom: 8 })
+      .border({ width: { bottom: 1 }, color: '#D8D5CC' })
+
+      if (this.tracks.length > 0) {
+        List({ space: 0 }) {
+          ForEach(this.tracks, (item: Track, index: number) => {
+            ListItem() {
+              TrackRow({
+                track: item,
+                index: index,
+                isCurrent: item.hash === this.currentTrack?.hash,
+                onPlay: (i: number): void => this.loadTrack(i),
+                onRemove: (i: number): void => this.removeTrack(i),
+              })
+            }
+          }, (item: Track): string => item.hash)
+        }
+        .width('100%')
+        .height(150)
+      } else {
+        Text('NO AUDIO IN PLAYLIST  /  USE + ADD TO BEGIN')
+          .fontSize(10)
+          .letterSpacing(1.2)
+          .fontColor('#85847D')
+          .margin({ top: 18 })
+      }
     }
     .width('100%')
     .height('100%')
-    .padding(16)
-    .backgroundColor('#170F2E')
+    .padding({ left: 42, right: 42, top: 28, bottom: 28 })
+    .backgroundColor('#FBFAF7')
+  }
+
+  build(): void {
+    Column() {
+      this.editorialLayout();
+    }
+    .width('100%')
+    .height('100%')
   }
 }

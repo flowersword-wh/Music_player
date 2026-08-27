@@ -20,17 +20,17 @@ export struct TrackRow {
         .width(12)
       Text((this.index + 1).toString().padStart(2, '0'))
         .fontSize(11)
-        .fontColor(this.isCurrent ? this.track.accent : '#B8ACDC')
+        .fontColor(this.isCurrent ? '#174A9C' : '#77766F')
         .width(20)
       Text(this.track.name)
         .fontSize(13)
-        .fontColor(this.isCurrent ? this.track.accent : '#F5F0FF')
+        .fontColor(this.isCurrent ? '#174A9C' : '#1F211F')
         .layoutWeight(1)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
       Text(this.track.duration > 0 ? fmtTime(this.track.duration) : '读取中')
         .fontSize(11)
-        .fontColor('#B8ACDC')
+        .fontColor('#77766F')
         .margin({ right: 8 })
       Image($r('app.media.ic_close'))
         .width(14)
@@ -41,8 +41,8 @@ export struct TrackRow {
     }
     .width('100%')
     .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-    .borderRadius(10)
-    .backgroundColor(this.isCurrent ? 'rgba(255,255,255,0.1)' : 'transparent')
+    .borderRadius(0)
+    .backgroundColor(this.isCurrent ? '#E8EEF8' : 'transparent')
     .border({
       width: { left: this.isCurrent ? 3 : 0 },
       color: this.track.accent,
