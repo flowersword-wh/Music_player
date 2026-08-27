@@ -22,6 +22,7 @@ struct MusicPlayerPage {
   @State isHashing: boolean = false;
   @State playMode: PlayMode = '列表循环';
   @State toastText: string = '';
+  @State pressedNav: string = '';
 
   private audioService: AudioService = new AudioService();
   private seeking: boolean = false;
@@ -31,6 +32,16 @@ struct MusicPlayerPage {
   private wasPlayingBeforeSeek: boolean = false;
   private completionTimer: number = -1;
   private toastTimer: number = -1;
+  private playlistScroller: Scroller = new Scroller();
+
+  private centerCurrentTrack(): void {
+    if (this.currentIndex < 0 || this.currentIndex >= this.tracks.length) {
+      return;
+    }
+    setTimeout((): void => {
+      this.playlistScroller.scrollToIndex(this.currentIndex + 1, true, ScrollAlign.CENTER);
+    }, 0);
+  }
 
   private updateVolumeFromTouch(event: TouchEvent): void {
     if (event.touches.length === 0) {
@@ -51,6 +62,14 @@ struct MusicPlayerPage {
     this.lastUiTimeMs = targetMs;
     if (event.type === TouchType.Up) {
       this.audioService.seek(targetMs);
+    }
+  }
+
+  private updateNavPress(control: string, event: TouchEvent): void {
+    if (event.type === TouchType.Down) {
+      this.pressedNav = control;
+    } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+      this.pressedNav = '';
     }
   }
 
@@ -260,6 +279,7 @@ struct MusicPlayerPage {
     this.isLoading = true;
     this.isPlaying = false;
     this.statusText = '切换中';
+    this.centerCurrentTrack();
     this.audioService.load(this.tracks[i].uri, autoPlay);
   }
 
@@ -437,6 +457,39 @@ struct MusicPlayerPage {
           .padding({ bottom: 10 })
           .border({ width: { bottom: 1 }, color: '#D8D5CC' })
 
+          if (this.tracks.length > 0) {
+            List({ space: 0, scroller: this.playlistScroller }) {
+              ListItem() {
+                Row().height(91)
+              }
+              ForEach(this.tracks, (item: Track, index: number) => {
+                ListItem() {
+                  TrackRow({
+                    track: item,
+                    index: index,
+                    isCurrent: item.hash === this.currentTrack?.hash,
+                    onPlay: (i: number): void => this.loadTrack(i),
+                    onRemove: (i: number): void => this.removeTrack(i),
+                  })
+                }
+              }, (item: Track): string => item.hash)
+              ListItem() {
+                Row().height(91)
+              }
+            }
+            .width('100%')
+            .height(220)
+            .margin({ top: 14, bottom: 8 })
+            .scrollBar(BarState.Auto)
+            .edgeEffect(EdgeEffect.Spring)
+          } else {
+            Text('NO AUDIO IN PLAYLIST  /  USE + ADD TO BEGIN')
+              .fontSize(10)
+              .letterSpacing(1.2)
+              .fontColor('#85847D')
+              .margin({ top: 18, bottom: 8 })
+          }
+
           if (false) {
           Row() {
             Text(fmtTime(this.currentTimeMs)).fontSize(10).fontColor('#1F211F')
@@ -502,9 +555,19 @@ struct MusicPlayerPage {
 
       Row() {
         Button() {
-          Text('‹ PREV').fontSize(10).fontColor('#1F211F')
+          Text('‹ PREV')
+            .fontSize(10)
+            .fontWeight(FontWeight.Medium)
+            .letterSpacing(1)
+            .fontColor(this.pressedNav === 'prev' ? '#FBFAF7' : '#1F211F')
         }
-        .width(92).backgroundColor('transparent').onClick((): void => this.prev())
+        .width(92)
+        .height(38)
+        .borderRadius(2)
+        .border({ width: 1, color: this.pressedNav === 'prev' ? '#174A9C' : '#D8D5CC' })
+        .backgroundColor(this.pressedNav === 'prev' ? '#174A9C' : '#E8E6DF')
+        .onTouch((event: TouchEvent): void => this.updateNavPress('prev', event))
+        .onClick((): void => this.prev())
         Blank()
         Button() {
           Text(this.isLoading ? 'LOADING' : (this.isPlaying ? 'PAUSE' : 'PLAY'))
@@ -514,9 +577,19 @@ struct MusicPlayerPage {
         .enabled(this.tracks.length > 0 && !this.isLoading).onClick((): void => this.togglePlay())
         Blank()
         Button() {
-          Text('NEXT ›').fontSize(10).fontColor('#1F211F')
+          Text('NEXT ›')
+            .fontSize(10)
+            .fontWeight(FontWeight.Medium)
+            .letterSpacing(1)
+            .fontColor(this.pressedNav === 'next' ? '#FBFAF7' : '#1F211F')
         }
-        .width(92).backgroundColor('transparent').onClick((): void => this.next())
+        .width(92)
+        .height(38)
+        .borderRadius(2)
+        .border({ width: 1, color: this.pressedNav === 'next' ? '#174A9C' : '#D8D5CC' })
+        .backgroundColor(this.pressedNav === 'next' ? '#174A9C' : '#E8E6DF')
+        .onTouch((event: TouchEvent): void => this.updateNavPress('next', event))
+        .onClick((): void => this.next())
       }
       .width('100%').height(52).justifyContent(FlexAlign.SpaceBetween)
       .margin({ bottom: 18 })
@@ -548,29 +621,6 @@ struct MusicPlayerPage {
       .padding({ bottom: 8 })
       .border({ width: { bottom: 1 }, color: '#D8D5CC' })
 
-      if (this.tracks.length > 0) {
-        List({ space: 0 }) {
-          ForEach(this.tracks, (item: Track, index: number) => {
-            ListItem() {
-              TrackRow({
-                track: item,
-                index: index,
-                isCurrent: item.hash === this.currentTrack?.hash,
-                onPlay: (i: number): void => this.loadTrack(i),
-                onRemove: (i: number): void => this.removeTrack(i),
-              })
-            }
-          }, (item: Track): string => item.hash)
-        }
-        .width('100%')
-        .height(150)
-      } else {
-        Text('NO AUDIO IN PLAYLIST  /  USE + ADD TO BEGIN')
-          .fontSize(10)
-          .letterSpacing(1.2)
-          .fontColor('#85847D')
-          .margin({ top: 18 })
-      }
     }
     .width('100%')
     .height('100%')
