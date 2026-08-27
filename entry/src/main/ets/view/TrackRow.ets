@@ -7,8 +7,8 @@ import { Track, fmtTime } from '../model/Track';
 @Component
 export struct TrackRow {
   @ObjectLink track: Track;
-  index: number = 0;
-  isCurrent: boolean = false;
+  @Prop index: number = 0;
+  @Prop isCurrent: boolean = false;
   onPlay: (index: number) => void = () => {};
   onRemove: (index: number) => void = () => {};
 

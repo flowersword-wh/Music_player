@@ -170,8 +170,16 @@ export class AudioService {
   }
 
   /** ms: 目标进度(毫秒) */
-  seek(ms: number): void {
-    this.player?.seek(ms);
+  async seek(ms: number): Promise<void> {
+    if (!this.player || this.released) {
+      return;
+    }
+    try {
+      await this.player.seek(ms);
+    } catch (err) {
+      const e = err as BusinessError;
+      this.onError(`${e.code}: ${e.message}`);
+    }
   }
 
   /** vol: 0.0 ~ 1.0 */
@@ -239,6 +247,7 @@ export class AudioService {
       while (readLength > 0) {
         md.updateSync({ data: new Uint8Array(buffer, 0, readLength) });
         offset += readLength;
+        await Promise.resolve();
         readLength = fileIo.readSync(file.fd, buffer, { offset, length: chunkSize });
       }
       const digest = md.digestSync().data;

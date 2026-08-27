@@ -25,6 +25,9 @@ struct MusicPlayerPage {
 
   private audioService: AudioService = new AudioService();
   private seeking: boolean = false;
+  private lastUiTimeMs: number = -1;
+  private lastDraggingTimeMs: number = -1;
+  private seekRequestId: number = 0;
   private toastTimer: number = -1;
 
   aboutToAppear(): void {
@@ -37,8 +40,9 @@ struct MusicPlayerPage {
       this.statusText = this.stateText(state);
     };
     this.audioService.onTimeUpdate = (ms: number): void => {
-      if (!this.seeking) {
+      if (!this.seeking && !this.isLoading && (this.lastUiTimeMs < 0 || ms - this.lastUiTimeMs >= 120)) {
         this.currentTimeMs = ms;
+        this.lastUiTimeMs = ms;
       }
     };
     this.audioService.onDurationReady = (ms: number): void => {
@@ -183,8 +187,10 @@ struct MusicPlayerPage {
     this.currentIndex = i;
     this.currentTrack = this.tracks[i];
     this.currentTimeMs = 0;
+    this.lastUiTimeMs = -1;
     this.durationMs = this.tracks[i].duration > 0 ? this.tracks[i].duration : 0;
     this.isLoading = true;
+    this.isPlaying = false;
     this.statusText = '切换中';
     this.audioService.load(this.tracks[i].uri, autoPlay);
   }
@@ -397,10 +403,22 @@ struct MusicPlayerPage {
             .onChange((value: number, mode: SliderChangeMode): void => {
               if (mode === SliderChangeMode.Moving) {
                 this.seeking = true;
-                this.currentTimeMs = (value / 100) * this.durationMs;
+                const draggingTimeMs = (value / 100) * this.durationMs;
+                if (this.lastDraggingTimeMs < 0 || Math.abs(draggingTimeMs - this.lastDraggingTimeMs) >= 120) {
+                  this.currentTimeMs = draggingTimeMs;
+                  this.lastDraggingTimeMs = draggingTimeMs;
+                }
               } else if (mode === SliderChangeMode.End) {
-                this.audioService.seek((value / 100) * this.durationMs);
-                this.seeking = false;
+                const targetMs = (value / 100) * this.durationMs;
+                const requestId = ++this.seekRequestId;
+                this.currentTimeMs = targetMs;
+                this.lastUiTimeMs = targetMs;
+                this.audioService.seek(targetMs).then((): void => {
+                  if (requestId === this.seekRequestId) {
+                    this.seeking = false;
+                    this.lastDraggingTimeMs = -1;
+                  }
+                });
               }
             })
           Text(fmtTime(this.durationMs)).fontSize(11).fontColor('#B8ACDC')
@@ -501,7 +519,7 @@ struct MusicPlayerPage {
                 TrackRow({
                   track: item,
                   index: index,
-                  isCurrent: index === this.currentIndex,
+                  isCurrent: item.hash === this.currentTrack?.hash,
                   onPlay: (i: number): void => {
                     this.loadTrack(i);
                   },

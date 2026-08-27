@@ -8,7 +8,7 @@ interface Particle {
 
 function makeParticles(): Particle[] {
   const arr: Particle[] = [];
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0; i < 8; i++) {
     arr.push({
       angle: Math.random() * Math.PI * 2,
       radius: 0.3 + Math.random() * 0.5,
@@ -43,6 +43,7 @@ export struct BlobCanvas {
   private level: number = 0;
   private targetLevel: number = 0;
   private timerId: number = -1;
+  private lastPlaying: boolean = false;
   private particles: Particle[] = makeParticles();
 
   private hexToRgb(hex: string): [number, number, number] {
@@ -55,7 +56,11 @@ export struct BlobCanvas {
       return;
     }
     this.timerId = setInterval((): void => {
-      this.t += 0.016;
+      if (!this.isPlaying && !this.lastPlaying) {
+        return;
+      }
+      this.lastPlaying = this.isPlaying;
+      this.t += 0.033;
       // 播放时让目标振幅在 0.35~1 之间随机漂移,营造律动感;暂停时回落到 0
       if (this.isPlaying) {
         if (Math.random() < 0.08) {
@@ -66,7 +71,7 @@ export struct BlobCanvas {
       }
       this.level += (this.targetLevel - this.level) * 0.15;
       this.draw();
-    }, 16) as number;
+    }, 33) as number;
   }
 
   private draw(): void {
@@ -90,7 +95,7 @@ export struct BlobCanvas {
     ctx.fillRect(0, 0, w, h);
 
     // 变形 blob
-    const points = 48;
+    const points = 24;
     ctx.beginPath();
     for (let i = 0; i <= points; i++) {
       const ang = (i / points) * Math.PI * 2;
@@ -111,7 +116,7 @@ export struct BlobCanvas {
     blobGrad.addColorStop(1, `rgba(${c2[0]},${c2[1]},${c2[2]},0.92)`);
     ctx.fillStyle = blobGrad;
     ctx.shadowColor = `rgba(${c1[0]},${c1[1]},${c1[2]},0.5)`;
-    ctx.shadowBlur = 40;
+    ctx.shadowBlur = 18;
     ctx.fill();
     ctx.shadowBlur = 0;
 
@@ -144,12 +149,13 @@ export struct BlobCanvas {
   }
 
   build(): void {
-    Canvas(this.context)
+      Canvas(this.context)
       .width('100%')
       .height('100%')
       .backgroundColor('#0F0A24')
       .borderRadius(22)
       .onReady((): void => {
+        this.draw();
         this.startLoop();
       })
   }
