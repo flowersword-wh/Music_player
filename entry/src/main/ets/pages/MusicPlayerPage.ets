@@ -4,6 +4,8 @@ import { Track, ACCENT_PAIRS, fmtTime } from '../model/Track';
 import { BlobCanvas } from '../view/BlobCanvas';
 import { TrackRow } from '../view/TrackRow';
 
+type PlayMode = '顺序播放' | '列表循环' | '单曲循环' | '随机播放';
+
 @Entry
 @Component
 struct MusicPlayerPage {
@@ -16,13 +18,21 @@ struct MusicPlayerPage {
   @State volume: number = 0.75;
   @State statusText: string = '空闲';
   @State audioReady: boolean = false;
+  @State isLoading: boolean = false;
+  @State playMode: PlayMode = '列表循环';
+  @State toastText: string = '';
 
   private audioService: AudioService = new AudioService();
   private seeking: boolean = false;
+  private toastTimer: number = -1;
 
   aboutToAppear(): void {
     this.audioService.onStateChange = (state: PlayerState): void => {
       this.isPlaying = state === 'playing';
+      this.isLoading = state === 'initialized' || state === 'prepared';
+      if (state === 'playing' || state === 'paused' || state === 'completed' || state === 'error') {
+        this.isLoading = false;
+      }
       this.statusText = this.stateText(state);
     };
     this.audioService.onTimeUpdate = (ms: number): void => {
@@ -38,25 +48,48 @@ struct MusicPlayerPage {
     };
     this.audioService.onError = (): void => {
       this.isPlaying = false;
+      this.isLoading = false;
       this.statusText = '播放失败';
+      this.showToast('无法播放此音频文件');
     };
     this.audioService.onCompleted = (): void => {
-      if (this.tracks.length > 1) {
-        this.next();
-      } else {
-        this.isPlaying = false;
-      }
+      this.playCompletedTrack();
     };
     this.audioService.init().then((ready: boolean): void => {
       this.audioReady = ready;
       if (ready) {
         this.audioService.setVolume(this.volume);
+      } else {
+        this.statusText = '播放器不可用';
+        this.showToast('播放器初始化失败，请重试');
       }
     });
   }
 
   aboutToDisappear(): void {
+    if (this.toastTimer >= 0) {
+      clearTimeout(this.toastTimer);
+      this.toastTimer = -1;
+    }
     this.audioService.release();
+  }
+
+  private showToast(message: string): void {
+    this.toastText = message;
+    if (this.toastTimer >= 0) {
+      clearTimeout(this.toastTimer);
+    }
+    this.toastTimer = setTimeout((): void => {
+      this.toastText = '';
+      this.toastTimer = -1;
+    }, 2600) as number;
+  }
+
+  private cyclePlayMode(): void {
+    const modes: PlayMode[] = ['列表循环', '顺序播放', '单曲循环', '随机播放'];
+    const index = modes.indexOf(this.playMode);
+    this.playMode = modes[(index + 1) % modes.length];
+    this.showToast(`播放模式：${this.playMode}`);
   }
 
   private stateText(state: PlayerState): string {
@@ -95,6 +128,7 @@ struct MusicPlayerPage {
       if (this.currentIndex === -1) {
         this.loadTrack(startLen);
       }
+      this.showToast(`已添加 ${uris.length} 首歌曲`);
       // 后台读取每首歌的时长,列表行会通过 @ObjectLink 自动刷新
       uris.forEach((uri: string, i: number): void => {
         const idx = startLen + i;
@@ -108,6 +142,7 @@ struct MusicPlayerPage {
       });
     } catch (e) {
       this.statusText = '无法读取音频';
+      this.showToast('选择音频失败，请检查文件权限');
     }
   }
 
@@ -119,6 +154,7 @@ struct MusicPlayerPage {
     this.currentTrack = this.tracks[i];
     this.currentTimeMs = 0;
     this.durationMs = this.tracks[i].duration > 0 ? this.tracks[i].duration : 0;
+    this.isLoading = true;
     this.audioService.load(this.tracks[i].uri, autoPlay);
   }
 
@@ -151,6 +187,44 @@ struct MusicPlayerPage {
     }
     const i = (this.currentIndex + 1) % this.tracks.length;
     this.loadTrack(i);
+  }
+
+  private playCompletedTrack(): void {
+    if (this.tracks.length === 0) {
+      return;
+    }
+    if (this.playMode === '单曲循环') {
+      this.loadTrack(this.currentIndex);
+      return;
+    }
+    if (this.playMode === '顺序播放' && this.currentIndex >= this.tracks.length - 1) {
+      this.isPlaying = false;
+      this.statusText = '播放完成';
+      this.showToast('播放列表已播放完成');
+      return;
+    }
+    if (this.playMode === '随机播放' && this.tracks.length > 1) {
+      let randomIndex = this.currentIndex;
+      while (randomIndex === this.currentIndex) {
+        randomIndex = Math.floor(Math.random() * this.tracks.length);
+      }
+      this.loadTrack(randomIndex);
+      return;
+    }
+    this.next();
+  }
+
+  private clearTracks(): void {
+    this.audioService.pause();
+    this.tracks = [];
+    this.currentIndex = -1;
+    this.currentTrack = null;
+    this.currentTimeMs = 0;
+    this.durationMs = 0;
+    this.isPlaying = false;
+    this.isLoading = false;
+    this.statusText = '空闲';
+    this.showToast('播放列表已清空');
   }
 
   private removeTrack(i: number): void {
@@ -190,6 +264,17 @@ struct MusicPlayerPage {
         }
         .width('100%')
         .margin({ bottom: 16 })
+
+        if (this.toastText.length > 0) {
+          Text(this.toastText)
+            .fontSize(12)
+            .fontColor('#F5F0FF')
+            .width('100%')
+            .padding({ left: 12, right: 12, top: 9, bottom: 9 })
+            .backgroundColor('rgba(255,255,255,0.1)')
+            .borderRadius(10)
+            .margin({ bottom: 12 })
+        }
 
         // 可视化封面
         Stack() {
@@ -272,13 +357,19 @@ struct MusicPlayerPage {
             .opacity(this.tracks.length ? 1 : 0.3)
             .onClick((): void => this.prev())
           Button() {
-            Image(this.isPlaying ? $r('app.media.ic_pause') : $r('app.media.ic_play'))
-              .width(20).height(20)
+            if (this.isLoading) {
+              Text('•••')
+                .fontSize(16)
+                .fontColor('#F5F0FF')
+            } else {
+              Image(this.isPlaying ? $r('app.media.ic_pause') : $r('app.media.ic_play'))
+                .width(20).height(20)
+            }
           }
           .width(58).height(58)
           .borderRadius(29)
           .backgroundColor(this.currentTrack?.accent ?? '#FF3E9A')
-          .enabled(this.tracks.length > 0)
+          .enabled(this.tracks.length > 0 && !this.isLoading)
           .onClick((): void => this.togglePlay())
           Image($r('app.media.ic_next'))
             .width(22).height(22)
@@ -308,6 +399,25 @@ struct MusicPlayerPage {
         Row() {
           Text('播放列表').fontSize(11).letterSpacing(1).fontColor('#B8ACDC')
           Blank()
+          Button(this.playMode)
+            .fontSize(10)
+            .height(28)
+            .margin({ right: 6 })
+            .backgroundColor('rgba(255,255,255,0.06)')
+            .fontColor('#B8ACDC')
+            .onClick((): void => {
+              this.cyclePlayMode();
+            })
+          Button('清空')
+            .fontSize(10)
+            .height(28)
+            .margin({ right: 6 })
+            .backgroundColor('rgba(255,255,255,0.06)')
+            .fontColor('#B8ACDC')
+            .enabled(this.tracks.length > 0)
+            .onClick((): void => {
+              this.clearTracks();
+            })
           Button('＋ 添加')
             .fontSize(11)
             .height(28)
