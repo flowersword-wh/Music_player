@@ -41,6 +41,51 @@ struct MusicPlayerPage {
     this.audioService.setVolume(this.volume);
   }
 
+  private updateProgressFromTouch(event: TouchEvent): void {
+    if (event.touches.length === 0 || this.durationMs <= 0) {
+      return;
+    }
+    const y = event.touches[0].y;
+    const targetMs = Math.max(0, Math.min(this.durationMs, (1 - y / 188) * this.durationMs));
+    this.currentTimeMs = targetMs;
+    this.lastUiTimeMs = targetMs;
+    if (event.type === TouchType.Up) {
+      this.audioService.seek(targetMs);
+    }
+  }
+
+  @Builder
+  private leftControlBars(): void {
+    Row({ space: 24 }) {
+      Column() {
+        Text('PLAYBACK').fontSize(8).letterSpacing(1.2).fontColor('#85847D')
+        Stack({ alignContent: Alignment.Bottom }) {
+          Column().width(42).height(150).backgroundColor('#D5D2C9')
+          Column().width(42).height(`${this.durationMs > 0 ? Math.max(2, this.currentTimeMs / this.durationMs * 100) : 2}%`).backgroundColor('#1F211F')
+        }
+        .width(42).height(150)
+        .onTouch((event: TouchEvent): void => this.updateProgressFromTouch(event))
+        Text(`${fmtTime(this.currentTimeMs)} / ${fmtTime(this.durationMs)}`).fontSize(8).fontColor('#77766F').margin({ top: 6 })
+      }
+      .alignItems(HorizontalAlign.Start)
+
+      Column() {
+        Text('OUTPUT').fontSize(8).letterSpacing(1.2).fontColor('#85847D')
+        Stack({ alignContent: Alignment.Bottom }) {
+          Column().width(42).height(150).backgroundColor('#D5D2C9')
+          Column().width(42).height(`${Math.max(2, this.volume * 100)}%`).backgroundColor('#1F211F')
+        }
+        .width(42).height(150)
+        .onTouch((event: TouchEvent): void => this.updateVolumeFromTouch(event))
+        Text(Math.round(this.volume * 100).toString().padStart(3, '0')).fontSize(8).fontColor('#77766F').margin({ top: 6 })
+      }
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .justifyContent(FlexAlign.Center)
+    .margin({ top: 18, bottom: 18 })
+  }
+
   aboutToAppear(): void {
     this.audioService.onStateChange = (state: PlayerState): void => {
       this.isPlaying = !this.seeking && state === 'playing';
@@ -357,8 +402,9 @@ struct MusicPlayerPage {
           }
           .width('100%')
           .aspectRatio(1)
-          .position({ x: 0, y: 28 })
           .border({ width: 1, color: '#D8D5CC' })
+          .margin({ bottom: 16 })
+          this.leftControlBars()
         }
         .width('42%')
         .alignItems(HorizontalAlign.Start)
@@ -398,52 +444,17 @@ struct MusicPlayerPage {
           .border({ width: { bottom: 1 }, color: '#D8D5CC' })
 
           Row() {
-            Text(fmtTime(this.currentTimeMs)).fontSize(11).fontColor('#1F211F')
-            Slider({
-              value: this.durationMs > 0 ? (this.currentTimeMs / this.durationMs) * 100 : 0,
-              min: 0, max: 100, step: 0.1,
-            })
-              .layoutWeight(1)
-              .margin({ left: 14, right: 14 })
-              .trackColor('#D5D2C9')
-              .selectedColor('#1F211F')
-              .blockColor('#1F211F')
-              .trackThickness(6)
-              .blockSize({ width: 12, height: 12 })
-              .trackBorderRadius(0)
-              .selectedBorderRadius(0)
-              .showTips(false)
-              .enabled(this.durationMs > 0)
-              .onChange((value: number, mode: SliderChangeMode): void => {
-                if (mode === SliderChangeMode.Moving) {
-                  if (!this.seeking) {
-                    this.wasPlayingBeforeSeek = this.isPlaying;
-                    this.isPlaying = false;
-                  }
-                  this.seeking = true;
-                  const draggingTimeMs = (value / 100) * this.durationMs;
-                  if (this.lastDraggingTimeMs < 0 || Math.abs(draggingTimeMs - this.lastDraggingTimeMs) >= 120) {
-                    this.currentTimeMs = draggingTimeMs;
-                    this.lastDraggingTimeMs = draggingTimeMs;
-                  }
-                } else if (mode === SliderChangeMode.End) {
-                  const targetMs = (value / 100) * this.durationMs;
-                  const requestId = ++this.seekRequestId;
-                  this.currentTimeMs = targetMs;
-                  this.lastUiTimeMs = targetMs;
-                  this.audioService.seek(targetMs).then((): void => {
-                    if (requestId === this.seekRequestId) {
-                      this.seeking = false;
-                      this.lastDraggingTimeMs = -1;
-                      this.isPlaying = this.wasPlayingBeforeSeek;
-                    }
-                  });
-                }
-              })
-            Text(fmtTime(this.durationMs)).fontSize(11).fontColor('#1F211F')
+            Text(fmtTime(this.currentTimeMs)).fontSize(10).fontColor('#1F211F')
+            Stack({ alignContent: Alignment.Bottom }) {
+              Column().width(44).height(188).backgroundColor('#D5D2C9')
+              Column().width(44).height(`${this.durationMs > 0 ? Math.max(2, this.currentTimeMs / this.durationMs * 100) : 2}%`).backgroundColor('#1F211F')
+            }
+            .width(44).height(188)
+            .onTouch((event: TouchEvent): void => this.updateProgressFromTouch(event))
+            Text(fmtTime(this.durationMs)).fontSize(10).fontColor('#1F211F')
           }
-          .width('100%')
-          .margin({ top: 20, bottom: 22 })
+          .width('100%').justifyContent(FlexAlign.Center).margin({ top: 20, bottom: 22 })
+          .visibility(Visibility.Hidden)
 
           Row({ space: 18 }) {
             Button('‹  PREV')
@@ -507,6 +518,7 @@ struct MusicPlayerPage {
           }
           .height(196)
           .margin({ bottom: 6 })
+          .visibility(Visibility.Hidden)
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
