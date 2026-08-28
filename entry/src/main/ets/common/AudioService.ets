@@ -104,6 +104,11 @@ export class AudioService {
         fileIo.closeSync(this.currentFile);
         this.currentFile = null;
       }
+      if (uri.startsWith('http://') || uri.startsWith('https://')) {
+        player.url = uri;
+        hilog.info(DOMAIN, 'AudioService', 'load remote audio');
+        return;
+      }
       const file = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
       if (requestId !== this.loadRequestId || this.released) {
         fileIo.closeSync(file);

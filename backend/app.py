@@ -434,9 +434,11 @@ def video_info(bvid: str) -> dict[str, Any]:
 
 def audio_url_for_video(bvid: str, cid: int, quality: int) -> tuple[str, str, str]:
     body = bilibili_request(
-        "/x/player/wbi/playurl",
+        # The legacy endpoint currently supports anonymous playback. The WBI
+        # variant can return “账号未登录” even with a valid anonymous buvid3.
+        "/x/player/playurl",
         {"bvid": bvid, "cid": cid, "qn": 80, "fnval": 4048, "fnver": 0, "fourk": 0, "platform": "html5"},
-        signed=True,
+        signed=False,
     )
     dash = (body.get("data") or {}).get("dash") or {}
     tracks = dash.get("audio") or []
@@ -459,7 +461,7 @@ def stream_response(url: str, filename: str, incoming: FastAPIRequest) -> Stream
     if range_header:
         headers["Range"] = range_header
     try:
-        upstream = urlopen(Request(url, headers=headers), timeout=30)
+        upstream = BILIBILI_OPENER.open(Request(url, headers=headers), timeout=30)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Audio stream request failed: {exc}") from exc
 

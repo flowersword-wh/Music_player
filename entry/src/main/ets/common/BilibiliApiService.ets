@@ -1,4 +1,5 @@
 import { http } from '@kit.NetworkKit';
+import { fileIo } from '@kit.CoreFileKit';
 
 /** Python 后端返回的 Bilibili 视频搜索结果。 */
 export interface BilibiliSearchItem {
@@ -171,6 +172,39 @@ export class BilibiliApiService {
   /** 获取本项目代理下载地址，可直接交给 AVPlayer 或下载器。 */
   getAudioStreamUrl(bvid: string, quality: number = 30280): string {
     return `${this.baseUrl}/api/videos/${encodeURIComponent(bvid)}/audio?quality=${quality}`;
+  }
+
+  /** 下载后端代理的音频流到文件选择器返回的目标 URI。 */
+  async downloadAudio(bvid: string, fileUri: string, quality: number = 30280): Promise<number> {
+    const client = http.createHttp();
+    let file: fileIo.File | null = null;
+    try {
+      const response = await client.request(this.getAudioStreamUrl(bvid, quality), {
+        method: http.RequestMethod.GET,
+        header: { 'Accept': 'audio/*' },
+        connectTimeout: 10000,
+        readTimeout: 120000,
+        expectDataType: http.HttpDataType.ARRAY_BUFFER
+      });
+      if (response.responseCode < 200 || response.responseCode >= 300) {
+        throw new Error(`Audio download failed: ${response.responseCode}`);
+      }
+      file = fileIo.openSync(fileUri, fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
+      const audioData = response.result as ArrayBuffer;
+      if (audioData.byteLength <= 0) {
+        throw new Error('Audio download returned empty data');
+      }
+      const bytesWritten = fileIo.writeSync(file.fd, audioData);
+      if (bytesWritten <= 0) {
+        throw new Error('Audio file write returned zero bytes');
+      }
+      return bytesWritten;
+    } finally {
+      if (file) {
+        fileIo.closeSync(file);
+      }
+      client.destroy();
+    }
   }
 
   async createDownload(payload: CreateDownloadRequest): Promise<DownloadActionResponse> {

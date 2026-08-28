@@ -30,6 +30,7 @@ struct MusicPlayerPage {
   @State searchItems: BilibiliSearchItem[] = [];
   @State isSearching: boolean = false;
   @State searchStatus: string = '输入关键词开始搜索';
+  @State downloadingBvid: string = '';
   @State playedDurationMs: number = 0;
   @State playCount: number = 0;
   @State completedCount: number = 0;
@@ -45,6 +46,7 @@ struct MusicPlayerPage {
   private completionTimer: number = -1;
   private toastTimer: number = -1;
   private usageTimer: number = -1;
+  private usageLastTickMs: number = -1;
   private lastPlayerState: PlayerState = 'idle';
   private lastStatsTimeMs: number = -1;
   private playlistScroller: Scroller = new Scroller();
@@ -99,8 +101,19 @@ struct MusicPlayerPage {
     if (this.usageTimer >= 0) {
       return;
     }
+    this.usageLastTickMs = Date.now();
     this.usageTimer = setInterval((): void => {
-      this.appUsageMs += 1000;
+      const now = Date.now();
+      if (this.usageLastTickMs >= 0) {
+        const elapsedMs = now - this.usageLastTickMs;
+        // Use the wall clock instead of assuming that setInterval fires
+        // exactly once per second. This keeps the value accurate when the
+        // UI thread is busy or the app is resumed from the background.
+        if (elapsedMs > 0 && elapsedMs < 60000) {
+          this.appUsageMs += elapsedMs;
+        }
+      }
+      this.usageLastTickMs = now;
     }, 1000) as number;
   }
 
@@ -120,6 +133,88 @@ struct MusicPlayerPage {
       this.searchStatus = '搜索失败，请确认 Python 后端已启动';
     } finally {
       this.isSearching = false;
+    }
+  }
+
+  private async playSearchItem(item: BilibiliSearchItem): Promise<void> {
+    if (!item.bvid) {
+      this.showToast('该搜索结果没有可播放的视频编号');
+      return;
+    }
+    const existingIndex = this.tracks.findIndex((track: Track): boolean => track.hash === `bilibili:${item.bvid}`);
+    if (existingIndex >= 0) {
+      this.activePage = '首页';
+      this.loadTrack(existingIndex);
+      return;
+    }
+    const pair = ACCENT_PAIRS[this.tracks.length % ACCENT_PAIRS.length];
+    const track = new Track(item.title, this.apiService.getAudioStreamUrl(item.bvid), `bilibili:${item.bvid}`, pair[0], pair[1]);
+    track.duration = this.parseSearchDuration(item.duration);
+    this.tracks.push(track);
+    this.activePage = '首页';
+    this.loadTrack(this.tracks.length - 1);
+    this.showToast(`正在播放《${item.title}》`);
+  }
+
+  private parseSearchDuration(value: string): number {
+    const parts = value.split(':');
+    if (parts.length !== 2) {
+      return -1;
+    }
+    const minutes = Number(parts[0]);
+    const seconds = Number(parts[1]);
+    return Number.isFinite(minutes) && Number.isFinite(seconds) ? (minutes * 60 + seconds) * 1000 : -1;
+  }
+
+  private async downloadSearchItem(item: BilibiliSearchItem): Promise<void> {
+    if (!item.bvid || this.downloadingBvid.length > 0) {
+      this.showToast(!item.bvid ? '该搜索结果没有可下载的视频编号' : '已有下载任务进行中');
+      return;
+    }
+    this.downloadingBvid = item.bvid;
+    try {
+      const safeTitle = item.title.replace(/[\\/:*?"<>|]/g, '_').substring(0, 60) || item.bvid;
+      // Let the system picker create a public document (normally under
+      // Downloads) instead of writing into the application's private files.
+      const fileName = `${safeTitle}_${item.bvid}.m4a`;
+      const audioPicker = new picker.AudioViewPicker(getContext(this));
+      const savedUris = await audioPicker.save({ newFileNames: [fileName] });
+      if (!savedUris || savedUris.length === 0) {
+        this.showToast('已取消保存');
+        return;
+      }
+      const fileUri = savedUris[0];
+      const bytes = await this.apiService.downloadAudio(item.bvid, fileUri);
+      try {
+        await this.apiService.createDownload({
+          bvid: item.bvid,
+          title: item.title,
+          status: 'completed',
+          progress: 100,
+          local_path: fileUri,
+          file_size: bytes
+        });
+      } catch (_) {
+        // The local file is already saved; history recording should not turn
+        // a successful download into a failure message.
+      }
+      const existingIndex = this.tracks.findIndex((track: Track): boolean => track.hash === `bilibili:${item.bvid}`);
+      if (existingIndex >= 0) {
+        // A track may have been played before it was saved. Promote that
+        // entry to the local file instead of adding a duplicate.
+        this.tracks[existingIndex].uri = fileUri;
+        this.tracks[existingIndex].duration = this.parseSearchDuration(item.duration);
+      } else {
+        const pair = ACCENT_PAIRS[this.tracks.length % ACCENT_PAIRS.length];
+        const savedTrack = new Track(item.title, fileUri, `bilibili:${item.bvid}`, pair[0], pair[1]);
+        savedTrack.duration = this.parseSearchDuration(item.duration);
+        this.tracks.push(savedTrack);
+      }
+      this.showToast(`已保存《${item.title}》`);
+    } catch (_) {
+      this.showToast('下载失败，请检查后端和网络连接');
+    } finally {
+      this.downloadingBvid = '';
     }
   }
 
@@ -221,6 +316,14 @@ struct MusicPlayerPage {
 
   aboutToDisappear(): void {
     if (this.usageTimer >= 0) {
+      const now = Date.now();
+      if (this.usageLastTickMs >= 0) {
+        const elapsedMs = now - this.usageLastTickMs;
+        if (elapsedMs > 0 && elapsedMs < 60000) {
+          this.appUsageMs += elapsedMs;
+        }
+      }
+      this.usageLastTickMs = -1;
       clearInterval(this.usageTimer);
       this.usageTimer = -1;
     }
@@ -503,12 +606,29 @@ struct MusicPlayerPage {
                 }
                 .width(72)
                 .alignItems(HorizontalAlign.End)
+                Column({ space: 4 }) {
+                  Button(this.downloadingBvid === item.bvid ? '...' : 'SAVE')
+                    .fontSize(8)
+                    .height(24)
+                    .padding({ left: 7, right: 7 })
+                    .backgroundColor('#D8E3F5')
+                    .fontColor('#174A9C')
+                    .enabled(this.downloadingBvid.length === 0)
+                    .onClick((): void => {
+                      this.downloadSearchItem(item);
+                    })
+                }
+                .width(48)
+                .alignItems(HorizontalAlign.End)
               }
               .width('100%')
               .padding({ top: 12, bottom: 12, left: 8, right: 8 })
               .border({ width: { bottom: 1 }, color: '#D8D5CC' })
+              .onClick((): void => {
+                this.playSearchItem(item);
+              })
             }
-          }, (item: BilibiliSearchItem): string => item.bvid)
+          }, (item: BilibiliSearchItem): string => `${item.bvid}_${item.aid}`)
         }
         .width('100%')
         .layoutWeight(1)
