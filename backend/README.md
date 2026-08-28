@@ -4,6 +4,16 @@
 
 ## 启动
 
+推荐从项目根目录使用一键脚本：
+
+```powershell
+.\scripts\start-backend.ps1
+```
+
+脚本会自动创建虚拟环境、安装依赖、设置数据库路径和启动服务。
+
+也可以手动启动：
+
 ```powershell
 cd D:\code\chore\Music_player\backend
 python -m venv .venv
@@ -12,10 +22,16 @@ pip install -r requirements.txt
 python -m uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
+如果本机通过 Clash 访问 Bilibili，可以设置代理：
+
+```powershell
+$env:BILIBILI_PROXY = "http://127.0.0.1:7890"
+```
+
 ## 接口
 
 - `GET /api/health`：健康检查。
-- `GET /api/search?keyword=周杰伦&page=1`：匿名搜索 B 站视频。
+- `GET /api/search?keyword=周杰伦&page=1`：匿名搜索 B 站视频，不需要登录。
 - `GET /api/videos/{bvid}/audio`：解析并代理视频音频，支持 `quality=30216|30232|30280`。
 - `GET /api/videos/{bvid}/audio/metadata`：返回前端所需的标题、时长、格式和项目内下载地址，不暴露 Bilibili 临时 URL。
 - `GET /api/audio/{sid}/download`：下载 B 站音频资源，支持 `quality=0|1|2|3`。

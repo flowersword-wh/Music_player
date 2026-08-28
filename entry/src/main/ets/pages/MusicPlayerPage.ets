@@ -30,6 +30,10 @@ struct MusicPlayerPage {
   @State searchItems: BilibiliSearchItem[] = [];
   @State isSearching: boolean = false;
   @State searchStatus: string = '输入关键词开始搜索';
+  @State playedDurationMs: number = 0;
+  @State playCount: number = 0;
+  @State completedCount: number = 0;
+  @State appUsageMs: number = 0;
 
   private audioService: AudioService = new AudioService();
   private apiService: BilibiliApiService = new BilibiliApiService();
@@ -40,6 +44,9 @@ struct MusicPlayerPage {
   private wasPlayingBeforeSeek: boolean = false;
   private completionTimer: number = -1;
   private toastTimer: number = -1;
+  private usageTimer: number = -1;
+  private lastPlayerState: PlayerState = 'idle';
+  private lastStatsTimeMs: number = -1;
   private playlistScroller: Scroller = new Scroller();
   private mainPages: MainPage[] = ['首页', '搜索', '统计'];
 
@@ -86,6 +93,15 @@ struct MusicPlayerPage {
     return this.tracks.reduce((total: number, track: Track): number => {
       return total + (track.duration > 0 ? track.duration : 0);
     }, 0);
+  }
+
+  private startUsageTimer(): void {
+    if (this.usageTimer >= 0) {
+      return;
+    }
+    this.usageTimer = setInterval((): void => {
+      this.appUsageMs += 1000;
+    }, 1000) as number;
   }
 
   private async performSearch(): Promise<void> {
@@ -140,7 +156,15 @@ struct MusicPlayerPage {
   }
 
   aboutToAppear(): void {
+    this.startUsageTimer();
     this.audioService.onStateChange = (state: PlayerState): void => {
+      if (state === 'playing' && this.lastPlayerState !== 'playing') {
+        this.playCount += 1;
+      }
+      if (state === 'completed' && this.lastPlayerState !== 'completed') {
+        this.completedCount += 1;
+      }
+      this.lastPlayerState = state;
       this.isPlaying = !this.seeking && state === 'playing';
       this.isLoading = state === 'initialized' || state === 'prepared';
       if (state === 'playing' || state === 'paused' || state === 'completed' || state === 'error') {
@@ -149,6 +173,13 @@ struct MusicPlayerPage {
       this.statusText = this.stateText(state);
     };
     this.audioService.onTimeUpdate = (ms: number): void => {
+      if (this.isPlaying && this.lastStatsTimeMs >= 0) {
+        const delta = ms - this.lastStatsTimeMs;
+        if (delta > 0 && delta <= 2000) {
+          this.playedDurationMs += delta;
+        }
+      }
+      this.lastStatsTimeMs = ms;
       if (!this.seeking && !this.isLoading && (this.lastUiTimeMs < 0 || ms - this.lastUiTimeMs >= 300)) {
         this.currentTimeMs = ms;
         this.lastUiTimeMs = ms;
@@ -189,6 +220,10 @@ struct MusicPlayerPage {
   }
 
   aboutToDisappear(): void {
+    if (this.usageTimer >= 0) {
+      clearInterval(this.usageTimer);
+      this.usageTimer = -1;
+    }
     if (this.completionTimer >= 0) {
       clearTimeout(this.completionTimer);
       this.completionTimer = -1;
@@ -309,6 +344,7 @@ struct MusicPlayerPage {
     this.currentTrack = this.tracks[i];
     this.currentTimeMs = 0;
     this.lastUiTimeMs = -1;
+    this.lastStatsTimeMs = -1;
     this.durationMs = this.tracks[i].duration > 0 ? this.tracks[i].duration : 0;
     this.isLoading = true;
     this.isPlaying = false;
@@ -539,7 +575,7 @@ struct MusicPlayerPage {
           .borderRadius(6)
 
           Column() {
-            Text(fmtTime(this.totalKnownDuration()))
+            Text(fmtTime(this.playedDurationMs))
               .fontSize(27)
               .fontWeight(FontWeight.Medium)
               .fontColor('#1F211F')
@@ -548,6 +584,33 @@ struct MusicPlayerPage {
           .layoutWeight(1)
           .padding({ top: 14, bottom: 14, left: 14, right: 14 })
           .backgroundColor('#E8E6DF')
+          .borderRadius(6)
+        }
+        .width('100%')
+
+        Row({ space: 10 }) {
+          Column() {
+            Text(this.playCount.toString())
+              .fontSize(27)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#1F211F')
+            Text('PLAY COUNT').fontSize(9).letterSpacing(1.2).fontColor('#77766F').margin({ top: 6 })
+          }
+          .layoutWeight(1)
+          .padding({ top: 14, bottom: 14, left: 14, right: 14 })
+          .backgroundColor('#F0EFEA')
+          .borderRadius(6)
+
+          Column() {
+            Text(fmtTime(this.appUsageMs))
+              .fontSize(27)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#174A9C')
+            Text('APP USAGE').fontSize(9).letterSpacing(1.2).fontColor('#77766F').margin({ top: 6 })
+          }
+          .layoutWeight(1)
+          .padding({ top: 14, bottom: 14, left: 14, right: 14 })
+          .backgroundColor('#E8EEF8')
           .borderRadius(6)
         }
         .width('100%')
@@ -562,6 +625,11 @@ struct MusicPlayerPage {
             .fontSize(9)
             .letterSpacing(1.2)
             .fontColor(this.isPlaying ? '#174A9C' : '#77766F')
+          Text(`${this.completedCount} FINISHED`)
+            .fontSize(9)
+            .letterSpacing(1.1)
+            .fontColor('#85847D')
+            .margin({ left: 12 })
         }
         .width('100%')
 
