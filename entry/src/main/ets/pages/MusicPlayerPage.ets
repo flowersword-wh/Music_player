@@ -6,8 +6,17 @@ import { Track, ACCENT_PAIRS, fmtTime } from '../model/Track';
 import { BlobCanvas } from '../view/BlobCanvas';
 import { TrackRow } from '../view/TrackRow';
 
-type PlayMode = '顺序播放' | '列表循环' | '单曲循环' | '随机播放';
+type PlayMode = '列表循环' | '单曲循环' | '随机播放';
 type MainPage = '首页' | '搜索' | '统计';
+
+interface PersistentTrackRecord {
+  name: string;
+  uri: string;
+  duration: number;
+  hash: string;
+  accent: string;
+  accent2: string;
+}
 
 @Entry
 @Component
@@ -44,7 +53,6 @@ struct MusicPlayerPage {
   private lastDraggingTimeMs: number = -1;
   private seekRequestId: number = 0;
   private wasPlayingBeforeSeek: boolean = false;
-  private completionTimer: number = -1;
   private toastTimer: number = -1;
   private usagePreferences: preferences.Preferences | null = null;
   private usageSessionStartMs: number = -1;
@@ -52,6 +60,12 @@ struct MusicPlayerPage {
   private lastStatsTimeMs: number = -1;
   private playlistScroller: Scroller = new Scroller();
   private mainPages: MainPage[] = ['首页', '搜索', '统计'];
+  // 随机播放使用“不重复抽取”的队列，而不是每次只排除当前歌曲。
+  // 这样一轮播放中每首歌都会恰好出现一次，随后才开始下一轮。
+  private shuffleQueue: number[] = [];
+  private shuffleSignature: string = '';
+  private loadGeneration: number = 0;
+  private handledCompletionGeneration: number = -1;
 
   private centerCurrentTrack(): void {
     if (this.currentIndex < 0 || this.currentIndex >= this.tracks.length) {
@@ -125,6 +139,9 @@ struct MusicPlayerPage {
   private async startUsageSession(): Promise<void> {
     try {
       const store = await preferences.getPreferences(getContext(this), 'music_player_statistics');
+      this.usagePreferences = store;
+      await this.restorePlaylist(store);
+      await this.savePlaylist();
       const savedTotal = Number(await store.get('app_usage_ms', 0));
       const previousStart = Number(await store.get('app_usage_session_start_ms', 0));
       const now = Date.now();
@@ -132,7 +149,6 @@ struct MusicPlayerPage {
       // recover that unfinished session from its persisted start timestamp.
       const recoveredMs = previousStart > 0 && now >= previousStart ? now - previousStart : 0;
       this.appUsageMs = Math.max(0, savedTotal + recoveredMs);
-      this.usagePreferences = store;
       this.usageSessionStartMs = now;
       await store.put('app_usage_ms', this.appUsageMs);
       await store.put('app_usage_session_start_ms', now);
@@ -142,6 +158,65 @@ struct MusicPlayerPage {
       // is temporarily unavailable.
       this.usagePreferences = null;
       this.usageSessionStartMs = Date.now();
+    }
+  }
+
+  private async restorePlaylist(store: preferences.Preferences): Promise<void> {
+    try {
+      // Audio picker interaction can finish before preferences are ready.
+      // Keep any tracks added during that small window instead of replacing
+      // them with the old stored snapshot.
+      if (this.tracks.length > 0) {
+        return;
+      }
+      const raw = await store.get('persistent_playlist', '[]');
+      if (typeof raw !== 'string') {
+        return;
+      }
+      const savedTracks: PersistentTrackRecord[] = JSON.parse(raw) as PersistentTrackRecord[];
+      const restored: Track[] = [];
+      savedTracks.forEach((value: PersistentTrackRecord): void => {
+        const name = String(value.name ?? '').trim();
+        const uri = String(value.uri ?? '').trim();
+        const hash = String(value.hash ?? '').trim();
+        if (name.length === 0 || uri.length === 0 || hash.length === 0 || uri.startsWith('http')) {
+          return;
+        }
+        const pair = ACCENT_PAIRS[restored.length % ACCENT_PAIRS.length];
+        const track = new Track(name, uri, hash,
+          String(value.accent ?? pair[0]), String(value.accent2 ?? pair[1]));
+        const duration = Number(value.duration ?? -1);
+        track.duration = Number.isFinite(duration) ? duration : -1;
+        restored.push(track);
+      });
+      this.tracks = restored;
+      if (this.audioReady && this.currentIndex === -1 && restored.length > 0) {
+        this.loadTrack(0, false);
+      }
+    } catch (_) {
+      // A corrupt preference must not prevent the player from opening.
+    }
+  }
+
+  private async savePlaylist(): Promise<void> {
+    if (!this.usagePreferences) {
+      return;
+    }
+    const savedTracks = this.tracks
+      .filter((track: Track): boolean => !track.uri.startsWith('http://') && !track.uri.startsWith('https://'))
+      .map((track: Track): PersistentTrackRecord => ({
+        name: track.name,
+        uri: track.uri,
+        duration: track.duration,
+        hash: track.hash,
+        accent: track.accent,
+        accent2: track.accent2
+      }));
+    try {
+      await this.usagePreferences.put('persistent_playlist', JSON.stringify(savedTracks));
+      await this.usagePreferences.flush();
+    } catch (_) {
+      // Playlist persistence is best effort and must not interrupt playback.
     }
   }
 
@@ -196,6 +271,7 @@ struct MusicPlayerPage {
     const track = new Track(item.title, this.apiService.getAudioStreamUrl(item.bvid), `bilibili:${item.bvid}`, pair[0], pair[1]);
     track.duration = this.parseSearchDuration(item.duration);
     this.tracks.push(track);
+    this.savePlaylist();
     this.activePage = '首页';
     this.loadTrack(this.tracks.length - 1);
     this.showToast(`正在播放《${item.title}》`);
@@ -255,6 +331,7 @@ struct MusicPlayerPage {
         savedTrack.duration = this.parseSearchDuration(item.duration);
         this.tracks.push(savedTrack);
       }
+      this.savePlaylist();
       this.showToast(`已保存《${item.title}》`);
     } catch (_) {
       this.showToast('下载失败，请检查后端和网络连接');
@@ -329,6 +406,7 @@ struct MusicPlayerPage {
       this.durationMs = ms;
       if (this.currentTrack) {
         this.currentTrack.duration = ms;
+        this.savePlaylist();
       }
     };
     this.audioService.onError = (): void => {
@@ -338,20 +416,17 @@ struct MusicPlayerPage {
       this.showToast('无法播放此音频文件');
     };
     this.audioService.onCompleted = (): void => {
-      if (this.completionTimer >= 0 || this.isLoading) {
-        return;
-      }
-      this.completionTimer = setTimeout((): void => {
-        this.completionTimer = -1;
-        if (!this.isLoading) {
-          this.playCompletedTrack();
-        }
-      }, 0) as number;
+      // Route completion directly. Waiting for another state/timer can race
+      // with AVPlayer's completed -> reset transition and skip the mode.
+      this.playCompletedTrack();
     };
     this.audioService.init().then((ready: boolean): void => {
       this.audioReady = ready;
       if (ready) {
         this.audioService.setVolume(this.volume);
+        if (this.currentIndex === -1 && this.tracks.length > 0) {
+          this.loadTrack(0, false);
+        }
       } else {
         this.statusText = '播放器不可用';
         this.showToast('播放器初始化失败，请重试');
@@ -361,10 +436,6 @@ struct MusicPlayerPage {
 
   aboutToDisappear(): void {
     this.saveUsageSession();
-    if (this.completionTimer >= 0) {
-      clearTimeout(this.completionTimer);
-      this.completionTimer = -1;
-    }
     if (this.toastTimer >= 0) {
       clearTimeout(this.toastTimer);
       this.toastTimer = -1;
@@ -384,9 +455,12 @@ struct MusicPlayerPage {
   }
 
   private cyclePlayMode(): void {
-    const modes: PlayMode[] = ['列表循环', '顺序播放', '单曲循环', '随机播放'];
+    const modes: PlayMode[] = ['列表循环', '单曲循环', '随机播放'];
     const index = modes.indexOf(this.playMode);
     this.playMode = modes[(index + 1) % modes.length];
+    if (this.playMode === '随机播放') {
+      this.resetShuffleQueue();
+    }
     this.showToast(`播放模式：${this.playMode}`);
   }
 
@@ -449,6 +523,7 @@ struct MusicPlayerPage {
       addedTracks.forEach((track: Track): void => {
         this.tracks.push(track);
       });
+      this.savePlaylist();
       if (this.currentIndex === -1) {
         this.loadTrack(startLen);
       }
@@ -462,6 +537,7 @@ struct MusicPlayerPage {
           const currentIdx = this.tracks.indexOf(track);
           if (ms > 0 && currentIdx >= 0) {
             this.tracks[currentIdx].duration = ms;
+            this.savePlaylist();
           }
         });
       });
@@ -477,6 +553,7 @@ struct MusicPlayerPage {
     if (!this.audioReady || i < 0 || i >= this.tracks.length) {
       return;
     }
+    this.loadGeneration += 1;
     this.currentIndex = i;
     this.currentTrack = this.tracks[i];
     this.currentTimeMs = 0;
@@ -509,7 +586,17 @@ struct MusicPlayerPage {
     if (this.tracks.length === 0) {
       return;
     }
-    const i = (this.currentIndex - 1 + this.tracks.length) % this.tracks.length;
+    let i = this.currentIndex;
+    if (this.playMode === '随机播放' && this.tracks.length > 1) {
+      // 随机模式没有“上一首”的列表位置，返回一首新的随机歌曲。
+      i = this.nextShuffleIndex();
+    } else if (this.playMode !== '单曲循环') {
+      i = (this.currentIndex - 1 + this.tracks.length) % this.tracks.length;
+    }
+    // 单曲循环下 next/prev 都是“重新播放当前曲目”，不会离开当前歌曲。
+    if (i < 0) {
+      i = 0;
+    }
     this.loadTrack(i);
   }
 
@@ -517,32 +604,69 @@ struct MusicPlayerPage {
     if (this.tracks.length === 0) {
       return;
     }
-    const i = (this.currentIndex + 1) % this.tracks.length;
+    let i = this.currentIndex;
+    if (this.playMode === '随机播放' && this.tracks.length > 1) {
+      // 手动下一首与自动播放共用同一个随机队列，避免退化为顺序播放。
+      i = this.nextShuffleIndex();
+    } else if (this.playMode !== '单曲循环') {
+      i = (this.currentIndex + 1) % this.tracks.length;
+    }
+    if (i < 0) {
+      i = 0;
+    }
     this.loadTrack(i);
+  }
+
+  private playlistSignature(): string {
+    return this.tracks.map((track: Track): string => track.hash.length > 0 ? track.hash : track.uri).join('|');
+  }
+
+  private resetShuffleQueue(): void {
+    this.shuffleQueue = [];
+    this.shuffleSignature = this.playlistSignature();
+    for (let i = 0; i < this.tracks.length; i++) {
+      if (i !== this.currentIndex) {
+        this.shuffleQueue.push(i);
+      }
+    }
+    // Fisher-Yates：每轮随机排列一次，避免 while 随机抽样造成重复或偏差。
+    for (let i = this.shuffleQueue.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const value = this.shuffleQueue[i];
+      this.shuffleQueue[i] = this.shuffleQueue[j];
+      this.shuffleQueue[j] = value;
+    }
+  }
+
+  private nextShuffleIndex(): number {
+    const signature = this.playlistSignature();
+    if (signature !== this.shuffleSignature || this.shuffleQueue.length === 0) {
+      this.resetShuffleQueue();
+    }
+    if (this.shuffleQueue.length === 0) {
+      return this.currentIndex;
+    }
+    return this.shuffleQueue.shift() ?? this.currentIndex;
   }
 
   private playCompletedTrack(): void {
     if (this.tracks.length === 0) {
       return;
     }
+    // completed 事件在部分 API 版本中可能被投递两次；一次加载只处理一次。
+    if (this.handledCompletionGeneration === this.loadGeneration) {
+      return;
+    }
+    this.handledCompletionGeneration = this.loadGeneration;
     if (this.playMode === '单曲循环') {
       this.loadTrack(this.currentIndex);
       return;
     }
-    if (this.playMode === '顺序播放' && this.currentIndex >= this.tracks.length - 1) {
-      this.isPlaying = false;
-      this.statusText = '播放完成';
-      this.showToast('播放列表已播放完成');
-      return;
-    }
     if (this.playMode === '随机播放' && this.tracks.length > 1) {
-      let randomIndex = this.currentIndex;
-      while (randomIndex === this.currentIndex) {
-        randomIndex = Math.floor(Math.random() * this.tracks.length);
-      }
-      this.loadTrack(randomIndex);
+      this.loadTrack(this.nextShuffleIndex());
       return;
     }
+    // 列表循环到末尾时回到第一首；只有单曲循环才会留在当前歌曲。
     this.next();
   }
 
@@ -556,6 +680,7 @@ struct MusicPlayerPage {
     this.isPlaying = false;
     this.isLoading = false;
     this.statusText = '空闲';
+    this.savePlaylist();
     this.showToast('播放列表已清空');
   }
 
@@ -563,6 +688,7 @@ struct MusicPlayerPage {
     const removedName = this.tracks[i]?.name ?? '歌曲';
     const wasCurrent = i === this.currentIndex;
     this.tracks.splice(i, 1);
+    this.savePlaylist();
     if (this.tracks.length === 0) {
       this.audioService.stop();
       this.currentIndex = -1;
