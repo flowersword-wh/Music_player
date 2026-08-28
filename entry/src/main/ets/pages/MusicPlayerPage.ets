@@ -1,4 +1,5 @@
 import { picker } from '@kit.CoreFileKit';
+import { preferences } from '@kit.ArkData';
 import { AudioService, PlayerState } from '../common/AudioService';
 import { BilibiliApiService, BilibiliSearchItem } from '../common/BilibiliApiService';
 import { Track, ACCENT_PAIRS, fmtTime } from '../model/Track';
@@ -45,8 +46,8 @@ struct MusicPlayerPage {
   private wasPlayingBeforeSeek: boolean = false;
   private completionTimer: number = -1;
   private toastTimer: number = -1;
-  private usageTimer: number = -1;
-  private usageLastTickMs: number = -1;
+  private usagePreferences: preferences.Preferences | null = null;
+  private usageSessionStartMs: number = -1;
   private lastPlayerState: PlayerState = 'idle';
   private lastStatsTimeMs: number = -1;
   private playlistScroller: Scroller = new Scroller();
@@ -71,15 +72,39 @@ struct MusicPlayerPage {
   }
 
   private updateProgressFromTouch(event: TouchEvent): void {
-    if (event.touches.length === 0 || this.durationMs <= 0) {
+    if (this.durationMs <= 0) {
       return;
     }
-    const y = event.touches[0].y;
+    if (event.type === TouchType.Down) {
+      this.seeking = true;
+      this.wasPlayingBeforeSeek = this.isPlaying;
+      this.seekRequestId += 1;
+    }
+    if (event.type === TouchType.Cancel) {
+      this.seeking = false;
+      this.currentTimeMs = this.audioService.currentTime;
+      this.lastUiTimeMs = this.currentTimeMs;
+      return;
+    }
+    if (event.touches.length === 0) {
+      return;
+    }
+    const y = Math.max(0, Math.min(188, event.touches[0].y));
     const targetMs = Math.max(0, Math.min(this.durationMs, (1 - y / 188) * this.durationMs));
     this.currentTimeMs = targetMs;
     this.lastUiTimeMs = targetMs;
     if (event.type === TouchType.Up) {
-      this.audioService.seek(targetMs);
+      const requestId = ++this.seekRequestId;
+      this.audioService.seek(targetMs).then((): void => {
+        if (requestId !== this.seekRequestId) {
+          return;
+        }
+        // Keep the thumb at the user's chosen position until the player
+        // reports its first post-seek time update.
+        this.seeking = false;
+        this.isPlaying = this.wasPlayingBeforeSeek;
+        this.lastUiTimeMs = -1;
+      });
     }
   }
 
@@ -97,24 +122,44 @@ struct MusicPlayerPage {
     }, 0);
   }
 
-  private startUsageTimer(): void {
-    if (this.usageTimer >= 0) {
+  private async startUsageSession(): Promise<void> {
+    try {
+      const store = await preferences.getPreferences(getContext(this), 'music_player_statistics');
+      const savedTotal = Number(await store.get('app_usage_ms', 0));
+      const previousStart = Number(await store.get('app_usage_session_start_ms', 0));
+      const now = Date.now();
+      // If the previous process was killed before its lifecycle callback ran,
+      // recover that unfinished session from its persisted start timestamp.
+      const recoveredMs = previousStart > 0 && now >= previousStart ? now - previousStart : 0;
+      this.appUsageMs = Math.max(0, savedTotal + recoveredMs);
+      this.usagePreferences = store;
+      this.usageSessionStartMs = now;
+      await store.put('app_usage_ms', this.appUsageMs);
+      await store.put('app_usage_session_start_ms', now);
+      await store.flush();
+    } catch (_) {
+      // Statistics must not prevent the player from starting if persistence
+      // is temporarily unavailable.
+      this.usagePreferences = null;
+      this.usageSessionStartMs = Date.now();
+    }
+  }
+
+  private async saveUsageSession(): Promise<void> {
+    if (!this.usagePreferences || this.usageSessionStartMs < 0) {
       return;
     }
-    this.usageLastTickMs = Date.now();
-    this.usageTimer = setInterval((): void => {
-      const now = Date.now();
-      if (this.usageLastTickMs >= 0) {
-        const elapsedMs = now - this.usageLastTickMs;
-        // Use the wall clock instead of assuming that setInterval fires
-        // exactly once per second. This keeps the value accurate when the
-        // UI thread is busy or the app is resumed from the background.
-        if (elapsedMs > 0 && elapsedMs < 60000) {
-          this.appUsageMs += elapsedMs;
-        }
-      }
-      this.usageLastTickMs = now;
-    }, 1000) as number;
+    const now = Date.now();
+    const sessionMs = Math.max(0, now - this.usageSessionStartMs);
+    try {
+      const storedTotal = Number(await this.usagePreferences.get('app_usage_ms', this.appUsageMs));
+      await this.usagePreferences.put('app_usage_ms', Math.max(storedTotal, this.appUsageMs) + sessionMs);
+      await this.usagePreferences.put('app_usage_session_start_ms', 0);
+      await this.usagePreferences.flush();
+    } catch (_) {
+      // Ignore persistence errors during teardown.
+    }
+    this.usageSessionStartMs = -1;
   }
 
   private async performSearch(): Promise<void> {
@@ -251,7 +296,7 @@ struct MusicPlayerPage {
   }
 
   aboutToAppear(): void {
-    this.startUsageTimer();
+    this.startUsageSession();
     this.audioService.onStateChange = (state: PlayerState): void => {
       if (state === 'playing' && this.lastPlayerState !== 'playing') {
         this.playCount += 1;
@@ -315,18 +360,7 @@ struct MusicPlayerPage {
   }
 
   aboutToDisappear(): void {
-    if (this.usageTimer >= 0) {
-      const now = Date.now();
-      if (this.usageLastTickMs >= 0) {
-        const elapsedMs = now - this.usageLastTickMs;
-        if (elapsedMs > 0 && elapsedMs < 60000) {
-          this.appUsageMs += elapsedMs;
-        }
-      }
-      this.usageLastTickMs = -1;
-      clearInterval(this.usageTimer);
-      this.usageTimer = -1;
-    }
+    this.saveUsageSession();
     if (this.completionTimer >= 0) {
       clearTimeout(this.completionTimer);
       this.completionTimer = -1;
@@ -607,18 +641,24 @@ struct MusicPlayerPage {
                 .width(72)
                 .alignItems(HorizontalAlign.End)
                 Column({ space: 4 }) {
-                  Button(this.downloadingBvid === item.bvid ? '...' : 'SAVE')
-                    .fontSize(8)
-                    .height(24)
-                    .padding({ left: 7, right: 7 })
-                    .backgroundColor('#D8E3F5')
+                  // Keep the label stable because List reuses row nodes while
+                  // search results are refreshed. The shared download state
+                  // is still reflected by the disabled/background styles.
+                  Button('↓  SAVE')
+                    .fontSize(9)
+                    .fontWeight(FontWeight.Medium)
+                    .height(28)
+                    .padding({ left: 9, right: 9 })
+                    .borderRadius(14)
+                    .border({ width: 1, color: '#B7CBEA' })
+                    .backgroundColor(this.downloadingBvid === item.bvid ? '#C8D8F0' : '#E8EEF8')
                     .fontColor('#174A9C')
                     .enabled(this.downloadingBvid.length === 0)
                     .onClick((): void => {
                       this.downloadSearchItem(item);
                     })
                 }
-                .width(48)
+                .width(62)
                 .alignItems(HorizontalAlign.End)
               }
               .width('100%')
@@ -632,6 +672,9 @@ struct MusicPlayerPage {
         }
         .width('100%')
         .layoutWeight(1)
+        // The page has 24vp horizontal padding. Extend only the result list
+        // to the right edge so its scrollbar sits flush with the screen.
+        .margin({ right: -24 })
         .scrollBar(BarState.Auto)
       } else {
         Column() {
